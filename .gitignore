@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Локальное состояние (живёт в ~/.cache/booklib, но на всякий случай)
+*.db
+*.sqlite
+*.sqlite3
+covers/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+*~
+
+# Опись личной библиотеки — только локально.
+# build_taxonomy.py тоже приватный: он и есть раскладка, только в виде кода
+# (поимённые списки книг). Формат результата — в config/taxonomy.example.json.
+config/taxonomy.json
+scripts/build_taxonomy.py

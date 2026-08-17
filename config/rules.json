@@ -1,0 +1,80 @@
+{
+ "_comment": "Правила для книг, которых нет в taxonomy.json (новые поступления). Проверяются по порядку, первое совпадение выигрывает. Матчинг регистронезависимый по относительному пути карточки.",
+ "default": "Новое",
+ "rules": [
+  {
+   "_note": "Строгое правило: тип документа назван явно. Голое имя чипа сюда НЕ входит — иначе книга 'Zephyr RTOS для nRF52' уедет в даташиты.",
+   "section": "Даташиты и техдокументация",
+   "pattern": "datasheet|reference manual|user manual|user guide|programming manual|release notes|application note|errata|\\bds\\d{3,}|schematic|\\.sch\\b|orcad|splan"
+  },
+  {
+   "section": "Курсы, лекции и статьи",
+   "pattern": "lecture|slides|assignment|week[_ -]\\d|course|семинар|лекци|конспект|_l\\d+\\b"
+  },
+  {
+   "section": "Даосизм и китайская мысль",
+   "pattern": "даос|\\bдао\\b|чжуан|лао-?цзы|конфуци|taoism|tao te|zhuang|дэ цзин"
+  },
+  {
+   "section": "Анархизм и зины",
+   "pattern": "анарх|anarch|кропоткин|бакунин|bookchin|солидарност|прямой демократ|зин\\b|самоорганизац"
+  },
+  {
+   "section": "Machine Learning и LLM",
+   "pattern": "машинное обучение|глубокое обучение|нейросет|нейронн|deep learning|machine learning|\\bllm\\b|large language|pytorch|tensorflow|langchain|трансформер|scikit"
+  },
+  {
+   "section": "Embedded и микроконтроллеры",
+   "pattern": "микроконтроллер|\\bavr\\b|atmega|attiny|схемотехник|электроник|\\bfpga\\b|vhdl|verilog|embedded|прошивк|робот|robotics|печатных плат|осциллограф|\\brtos\\b|zephyr|freertos"
+  },
+  {
+   "section": "Linux и системное программирование",
+   "pattern": "linux|unix|kernel|ядро|buildroot|yocto|posix|systemd|busybox"
+  },
+  {
+   "section": "Программирование",
+   "pattern": "c\\+\\+|си\\+\\+|программировани|\\bpython\\b|\\brust\\b|golang|алгоритм|паттерн|design pattern|refactor|agile|\\bqt\\b"
+  },
+  {
+   "section": "Математика",
+   "pattern": "математик|комбинатор|теория графов|graph theory|combinatorics|уравнени|геометри|алгебр|вероятност|статистик|топологи"
+  },
+  {
+   "section": "Химия",
+   "pattern": "хими|chemistry|органическая|неорганическ"
+  },
+  {
+   "section": "Биология и медицина",
+   "pattern": "биохим|biochem|биолог|biology|медицин|анатоми|физиолог|lehninger"
+  },
+  {
+   "section": "Ферментация и кулинария",
+   "pattern": "фермент|ferment|пивовар|brewing|кулинар|рецепт|консервирован|koji|amazake|выпечк|хлеб"
+  },
+  {
+   "section": "Языки",
+   "pattern": "испанск|китайск|английск|немецк|французск|грамматик|\\bhsk\\b|разговорник"
+  },
+  {
+   "section": "Секс и отношения",
+   "pattern": "\\bsex\\b|sexual|эротик|orgasm|интимн|отношени|tantric"
+  },
+  {
+   "section": "Ремёсла и быт",
+   "pattern": "резьба по дереву|столярн|гидропоник|садоводств|автомобил|ремонт|своими руками"
+  },
+  {
+   "section": "Художественная литература",
+   "pattern": "роман|повесть|рассказы|стихотворен|поэзи|фантастик"
+  },
+  {
+   "section": "Философия и политика",
+   "pattern": "философи|philosophy|политическ|марксизм|социолог|этика"
+  },
+  {
+   "_note": "Последнее правило: голое имя чипа без типа документа. Стоит в самом конце, чтобы книга про чип ('Программирование STM32 на C++') осталась книгой.",
+   "section": "Даташиты и техдокументация",
+   "pattern": "stm8|stm32|gd32|nrf5|msp430|esp32|lis\\d|inemo|eeprom"
+  }
+ ]
+}

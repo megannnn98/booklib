@@ -1,0 +1,27 @@
+[Unit]
+Description=booklib — локальный веб-каталог библиотеки
+Documentation=file:%h/booklib/README.md
+# Привязка к графической сессии: открытие папки идёт через DBus в nemo,
+# без сессии эта функция всё равно не работает.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/booklib
+ExecStart=%h/.local/bin/uv run --directory %h/booklib booklib serve
+Restart=on-failure
+RestartSec=5
+
+# Слушать только петлю. Менять на 0.0.0.0 нельзя: /api/open запускает процессы.
+Environment=BOOKLIB_HOST=127.0.0.1
+Environment=BOOKLIB_PORT=8765
+# Рескан при старте: инкрементальный, на неизменной библиотеке ~0.1 с.
+Environment=BOOKLIB_SCAN_ON_START=true
+
+# Диск внешний. Если он не смонтирован, сервис обязан подняться и показать
+# каталог из кэша, а не пометить всю библиотеку пропавшей — за это отвечает
+# guard в scanner.sync(), поэтому RequiresMountsFor здесь намеренно НЕ указан.
+
+[Install]
+WantedBy=default.target
