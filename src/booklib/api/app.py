@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
@@ -27,6 +28,8 @@ SORTS = {
     "year": "year IS NULL, year DESC",
     "size": "size DESC",
 }
+
+_RESCAN_LOCK = threading.Lock()
 
 app = FastAPI(title="booklib", docs_url=None, redoc_url=None)
 
@@ -70,7 +73,17 @@ def library_mounted() -> bool:
 
 
 def rescan() -> dict:
-    """Полный цикл обновления: скан → разделы → недостающие обложки."""
+    """Полный цикл обновления: скан → разделы → недостающие обложки.
+
+    Под замком: роуты синхронные и выполняются в пуле потоков uvicorn, поэтому
+    двойной клик по «Обновить» или вторая вкладка запускали два скана разом —
+    два писателя в СУБД и две генерации одной обложки.
+    """
+    with _RESCAN_LOCK:
+        return _rescan()
+
+
+def _rescan() -> dict:
     started = time.time()
     groups = collect_groups()
     conn = connect()
@@ -141,11 +154,14 @@ def api_books(
         where.append("COALESCE(o.section, b.section) = ?")
         params.append(section)
     if q:
+        # % и _ в запросе — это символы из имён файлов ("C++", "_v2", "x86_64", "100%"),
+        # а не wildcard'ы. Без ESCAPE запрос "100%" матчил бы вообще всё.
+        escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         where.append(
             "pylower(COALESCE(o.title, b.title) || ' ' || COALESCE(o.author, b.author, '') "
-            "|| ' ' || b.key) LIKE ?"
+            "|| ' ' || b.key) LIKE ? ESCAPE '\\'"
         )
-        params.append(f"%{q.lower()}%")
+        params.append(f"%{escaped.lower()}%")
 
     sql = (
         "SELECT b.key, COALESCE(o.title, b.title) AS title, "
@@ -186,6 +202,16 @@ def api_books(
 
 @app.get("/api/cover")
 def api_cover(key: str) -> FileResponse:
+    # Проверяем не только наличие файла: после правки книги сканер ставит
+    # has_cover=0, а старый jpg остаётся на диске до следующей генерации.
+    conn = db()
+    try:
+        row = conn.execute("SELECT has_cover FROM books WHERE key = ?", (key,)).fetchone()
+    finally:
+        conn.close()
+    if row is None or not row["has_cover"]:
+        raise HTTPException(status_code=404, detail="обложки нет")
+
     path = covers.cover_path(key)
     if not path.exists():
         raise HTTPException(status_code=404, detail="обложки нет")
@@ -223,13 +249,29 @@ def api_edit(request: EditRequest) -> dict:
     """
     conn = db()
     try:
-        if conn.execute("SELECT 1 FROM books WHERE key = ?", (request.key,)).fetchone() is None:
+        # Именно базовые значения из books, а НЕ COALESCE с overrides: иначе правка
+        # одного поля затирала бы уже существующую правку другого. Пример: у книги
+        # свой title, пользователь меняет только раздел — форма пришлёт тот же title,
+        # он совпадёт с текущим (со своей же правкой) и обнулился бы.
+        base = conn.execute(
+            "SELECT title, author, section FROM books WHERE key = ?",
+            (request.key,),
+        ).fetchone()
+        if base is None:
             raise HTTPException(status_code=404, detail=f"нет такой карточки: {request.key}")
 
         def clean(value: str | None) -> str | None:
             return value.strip() or None if value is not None else None
 
         title, author, section = clean(request.title), clean(request.author), clean(request.section)
+
+        # Форма присылает все три поля, даже если пользователь менял одно. Значение,
+        # совпадающее с базовым, в overrides не пишем: иначе оно скопирует туда данные
+        # из taxonomy.json и заморозит их — будущая перегенерация раскладки до карточки
+        # уже не достучится, потому что COALESCE отдаст залипшую копию.
+        title = title if title != base["title"] else None
+        author = author if author != base["author"] else None
+        section = section if section != base["section"] else None
 
         if request.reset or not any((title, author, section)):
             conn.execute("DELETE FROM overrides WHERE key = ?", (request.key,))

@@ -61,6 +61,11 @@ CREATE INDEX IF NOT EXISTS books_section ON books(section);
 CREATE INDEX IF NOT EXISTS books_missing ON books(missing);
 """
 
+# Сколько ждать освобождения СУБД, прежде чем отдать "database is locked"
+BUSY_TIMEOUT_S = 15.0
+WAL_RETRIES = 10
+WAL_RETRY_DELAY_S = 0.05
+
 # Колонки, добавленные после первого релиза схемы: (таблица, колонка, тип)
 MIGRATIONS = (("books", "cover_error", "TEXT"),)
 
@@ -184,15 +189,43 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     for table, column, column_type in MIGRATIONS:
         existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         if column not in existing:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+            except sqlite3.OperationalError as exc:
+                # PRAGMA + ALTER не атомарны: другое соединение могло успеть между ними
+                if "duplicate column" not in str(exc):
+                    raise
     conn.commit()
+
+
+def _enable_wal(conn: sqlite3.Connection) -> None:
+    """Перевести СУБД в WAL, чтобы рескан не блокировал читателей витрины.
+
+    Смена журнала требует эксклюзивной блокировки, и SQLite возвращает на ней BUSY
+    НЕ вызывая busy-handler — то есть timeout соединения здесь не работает. Поэтому
+    короткий ретрай. Режим хранится в самом файле: достаточно, чтобы его выставило
+    одно соединение, остальные получат готовый "wal". Если не удалось совсем —
+    это не фатально, журнал остаётся прежним, корректность не страдает.
+    """
+    for _ in range(WAL_RETRIES):
+        try:
+            mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        except sqlite3.OperationalError:
+            mode = ""
+        if str(mode).lower() == "wal":
+            return
+        time.sleep(WAL_RETRY_DELAY_S)
 
 
 def connect(db_path: Path | None = None) -> sqlite3.Connection:
     db_path = db_path if db_path is not None else get_settings().db_path
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    # timeout задаётся при открытии, а НЕ отдельным PRAGMA после: переключение
+    # журнала в WAL требует эксклюзивной блокировки, и при одновременном открытии
+    # свежей СУБД несколькими потоками сам этот PRAGMA падал с "database is locked".
+    conn = sqlite3.connect(db_path, timeout=BUSY_TIMEOUT_S)
     conn.row_factory = sqlite3.Row
+    _enable_wal(conn)
     conn.executescript(SCHEMA)
     _apply_migrations(conn)
     return conn
@@ -261,7 +294,8 @@ def sync(
         if changed:
             conn.execute(
                 """UPDATE books SET formats_json=?, files_json=?, primary_file=?, size=?,
-                                    mtime=?, has_cover=0, seen_at=?, missing=0 WHERE key=?""",
+                                    mtime=?, has_cover=0, cover_error=NULL, seen_at=?,
+                                    missing=0 WHERE key=?""",
                 (formats_json, files_json, primary, size, mtime, now, key),
             )
             stats["updated"] += 1
@@ -271,10 +305,12 @@ def sync(
         if row["missing"]:
             stats["restored"] += 1
 
-    placeholders = ",".join("?" * len(groups)) if groups else "''"
+    # По метке времени, а не `key NOT IN (?,?,...)`: там был один плейсхолдер на
+    # карточку, и на ~33 тыс. книг скан упирался в SQLITE_MAX_VARIABLE_NUMBER (32766).
+    # Все найденные карточки получили seen_at = now выше, у пропавших метка старее.
     cursor = conn.execute(
-        f"UPDATE books SET missing=1 WHERE missing=0 AND key NOT IN ({placeholders})",
-        tuple(groups),
+        "UPDATE books SET missing=1 WHERE missing=0 AND seen_at < ?",
+        (now,),
     )
     stats["missing"] = cursor.rowcount
     conn.execute(

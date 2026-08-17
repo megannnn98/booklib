@@ -15,6 +15,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -29,6 +30,9 @@ from booklib.config.settings import get_settings
 from booklib.scanner import connect, library_root
 
 RENDERABLE_EXTS = (".pdf", ".djvu", ".djv", ".epub", ".fb2")
+
+# Потолок на распаковку картинки из epub/fb2 — защита от zip-бомбы
+MAX_EMBEDDED_IMAGE_BYTES = 64 * 1024 * 1024
 
 # Для обложки epub/fb2 идут первыми: там лежит настоящая обложка книги, тогда как
 # первая страница PDF/DJVU часто оказывается схемой, картой или пустым титулом.
@@ -60,9 +64,17 @@ def _save(image: Image.Image, destination: Path) -> None:
         image = image.convert("RGB")
     image.thumbnail((settings.cover_width, settings.cover_max_height), Image.Resampling.LANCZOS)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    tmp = destination.with_suffix(".tmp.jpg")
-    image.save(tmp, "JPEG", quality=settings.cover_quality, optimize=True)
-    tmp.replace(destination)
+    # Уникальный временный файл рядом с целевым: фиксированное имя .tmp.jpg
+    # означало гонку, если два рескана генерируют одну обложку одновременно.
+    handle, tmp_name = tempfile.mkstemp(suffix=".jpg", dir=destination.parent)
+    os.close(handle)
+    tmp = Path(tmp_name)
+    try:
+        image.save(tmp, "JPEG", quality=settings.cover_quality, optimize=True)
+        os.replace(tmp, destination)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess[bytes]:
@@ -122,6 +134,14 @@ def _from_djvu(source: Path, destination: Path) -> None:
         _save(image, destination)
 
 
+def _read_limited(archive: zipfile.ZipFile, name: str) -> bytes:
+    """Читать запись архива с ограничением: epub приходит из недоверенных источников."""
+    info = archive.getinfo(name)
+    if info.file_size > MAX_EMBEDDED_IMAGE_BYTES:
+        raise CoverError(f"изображение в архиве слишком большое: {info.file_size} байт")
+    return archive.read(name)
+
+
 def _epub_cover_bytes(source: Path) -> bytes:
     with zipfile.ZipFile(source) as archive:
         names = archive.namelist()
@@ -157,11 +177,11 @@ def _epub_cover_bytes(source: Path) -> bytes:
                 candidate = str(base / href).lstrip("./")
                 for name in (candidate, href):
                     if name in names:
-                        return archive.read(name)
+                        return _read_limited(archive, name)
 
         fallback = next((n for n in names if EPUB_COVER_NAME_RE.search(n)), None)
         if fallback:
-            return archive.read(fallback)
+            return _read_limited(archive, fallback)
     raise CoverError("в epub не найдена обложка")
 
 
@@ -262,8 +282,11 @@ def generate(force: bool = False, only: str | None = None, workers: int = 4) -> 
         try:
             build_cover(files, destination)
             return key, None
-        except CoverError as exc:
-            return key, str(exc)
+        except Exception as exc:
+            # Ловим широко намеренно: контент скачан из торрентов, битые файлы —
+            # штатная ситуация. DecompressionBombError и LargeZipFile наследуют
+            # Exception напрямую и раньше пробивали пул, роняя весь рескан.
+            return key, f"{type(exc).__name__}: {exc}"
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for key, error in pool.map(work, todo):
