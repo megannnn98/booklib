@@ -12,7 +12,7 @@
    `/run/media/b/DOWNLOADS/books` — ни чистки мусорных `Get More....txt`, ни
    переименований «для порядка». Всё изменяемое живёт в `~/.cache/booklib`.
 2. **Диск внешний.** Скан обязан прерваться, если корень не смонтирован или найдено
-   0 книг при непустом каталоге (`scanner.LibraryUnavailable`). Без этого одна
+   0 книг при непустом каталоге (`errors.LibraryUnavailable`). Без этого одна
    перезагрузка без диска пометит все 353 карточки как missing и сотрёт ручную
    раскладку. Guard проверен мутационно — не ослаблять.
 3. **Слушаем только `127.0.0.1`.** `/api/open` запускает процессы в сессии
@@ -27,7 +27,11 @@
 
 ```
 src/booklib/config/settings.py  настройки (env BOOKLIB_*), единственный источник путей
-src/booklib/scanner.py          обход дерева → карточки → инкрементальный диф → СУБД
+src/booklib/errors.py           LibraryUnavailable — общее исключение обхода и записи
+src/booklib/paths.py            library_root / relative_to_root
+src/booklib/db.py               соединение с СУБД: схема, миграции, WAL-ретрай
+src/booklib/grouping.py         обход дерева → карточки (BookGroup) → сводка обхода
+src/booklib/scanner.py          инкрементальный диф карточек → СУБД
 src/booklib/meta.py             нормализация имени файла, название/автор/год
 src/booklib/covers.py           превью: pdftocairo / ddjvu+Pillow / zip(epub) / base64(fb2)
 src/booklib/taxonomy.py         разделы: overrides → taxonomy.json → rules.json → «Новое»

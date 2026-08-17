@@ -14,14 +14,10 @@ from booklib import covers, opener
 from booklib.api.app import app as fastapi_app
 from booklib.api.app import rescan
 from booklib.config.settings import get_settings
-from booklib.scanner import (
-    LibraryUnavailable,
-    collect_groups,
-    connect,
-    group_meta,
-    stats_report,
-    sync,
-)
+from booklib.db import connect
+from booklib.errors import LibraryUnavailable
+from booklib.grouping import collect_groups, stats_report
+from booklib.scanner import sync
 from booklib.taxonomy import apply as apply_sections
 from booklib.taxonomy import classify_new
 
@@ -49,12 +45,12 @@ def scan(
         matched = [g for k, g in groups.items() if needle in k.casefold()]
         typer.echo(f"совпадений: {len(matched)}")
         for group in matched[:limit]:
-            title, author, year = group_meta(group)
+            title, author, year = group.title, group.author, group.year
             typer.echo(f"\n[{group.key}]")
             typer.echo(f"  название: {title}")
             typer.echo(f"  автор:    {author or '—'}   год: {year or '—'}")
             typer.echo(f"  форматы:  {', '.join(group.formats)} → {group.primary_file.name}")
-            for path in group.sorted_files:
+            for path in group.files:
                 typer.echo(f"    - {path.name}  ({path.stat().st_size / 1048576:.1f} MB)")
         return
 

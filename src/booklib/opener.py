@@ -16,7 +16,8 @@ import subprocess
 from pathlib import Path
 from urllib.parse import quote
 
-from booklib.scanner import connect, library_root
+from booklib.db import connect
+from booklib.paths import library_root
 
 DBUS_DEST = "org.freedesktop.FileManager1"
 DBUS_PATH = "/org/freedesktop/FileManager1"
@@ -57,7 +58,6 @@ def session_bus_env() -> dict[str, str]:
 def resolve_target(
     key: str,
     conn: sqlite3.Connection | None = None,
-    root: Path | None = None,
 ) -> Path:
     """Найти файл книги по ключу и убедиться, что он внутри библиотеки."""
     own_conn = conn is None
@@ -70,7 +70,7 @@ def resolve_target(
     if row is None:
         raise BookNotFound(f"книга не найдена в каталоге: {key}")
 
-    base = library_root(root)
+    base = library_root()
     resolved_root = base.resolve()
     target = (base / row["primary_file"]).resolve()
     if not target.is_relative_to(resolved_root):
@@ -131,12 +131,11 @@ def show_items(path: Path) -> str:
 def open_book(
     key: str,
     conn: sqlite3.Connection | None = None,
-    root: Path | None = None,
 ) -> dict[str, str]:
-    target = resolve_target(key, conn, root)
+    target = resolve_target(key, conn)
     method = show_items(target)
     return {
-        "opened": str(target.relative_to(library_root(root).resolve())),
+        "opened": str(target.relative_to(library_root().resolve())),
         "dir": str(target.parent),
         "method": method,
     }

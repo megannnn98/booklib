@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from booklib.config.settings import get_settings
-from booklib.scanner import connect
+from booklib.db import connect
 
 MINIMAL_PDF = (
     b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"

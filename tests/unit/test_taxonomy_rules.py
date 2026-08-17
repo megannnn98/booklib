@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from booklib.config.settings import get_settings
+from booklib.grouping import Kind
 from booklib.taxonomy import classify_new, load_rules, match_text
 
 REPO_CONFIG = Path(__file__).resolve().parents[2] / "config"
@@ -53,7 +54,7 @@ def test_unknown_goes_to_new_section() -> None:
 
 
 def test_audio_bypasses_rules() -> None:
-    assert classify_new("languages/курс/Audio/__audio__", kind="audio") == ("Аудио", "kind")
+    assert classify_new("languages/курс/Audio/__audio__", kind=Kind.AUDIO) == ("Аудио", "kind")
 
 
 def test_match_text_ignores_directory() -> None:

@@ -18,7 +18,10 @@ from pydantic import BaseModel
 
 from booklib import covers, opener
 from booklib.config.settings import get_settings
-from booklib.scanner import LibraryUnavailable, collect_groups, connect, sync
+from booklib.db import connect
+from booklib.errors import LibraryUnavailable
+from booklib.grouping import collect_groups
+from booklib.scanner import sync
 from booklib.taxonomy import apply as apply_sections
 from booklib.taxonomy import load_taxonomy
 

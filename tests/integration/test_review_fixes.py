@@ -15,8 +15,10 @@ from fastapi.testclient import TestClient
 
 from booklib import covers
 from booklib.api.app import app, rescan
+from booklib.db import connect
+from booklib.grouping import collect_groups
 from booklib.opener import OutsideLibrary, _file_uri, resolve_target
-from booklib.scanner import collect_groups, connect, sync
+from booklib.scanner import sync
 from booklib.taxonomy import apply as apply_sections
 from tests.conftest import make_book
 
@@ -30,7 +32,7 @@ def client(library: Path, db: sqlite3.Connection) -> TestClient:
     make_book(library, "programming/Книга про C++ и x86_64 - 2020.pdf")
     make_book(library, "programming/Скидка 100% на всё - 2021.pdf")
     make_book(library, "programming/Про x86y64 без подчёркивания - 2019.pdf")
-    sync(db, collect_groups(library), library)
+    sync(db, collect_groups())
     apply_sections(db)
     db.commit()
     return TestClient(app)
@@ -106,7 +108,7 @@ def test_missing_marking_uses_no_per_card_placeholders(
 
     statements: list[str] = []
     db.set_trace_callback(statements.append)
-    sync(db, collect_groups(library), library)
+    sync(db, collect_groups())
     db.set_trace_callback(None)
 
     marking = [s for s in statements if "missing=1" in s.replace(" ", "")]
@@ -118,10 +120,10 @@ def test_missing_marking_uses_no_per_card_placeholders(
 def test_missing_marking_still_correct_at_scale(library: Path, db: sqlite3.Connection) -> None:
     for number in range(200):
         make_book(library, f"book{number:03d}.pdf")
-    sync(db, collect_groups(library), library)
+    sync(db, collect_groups())
 
     (library / "book007.pdf").unlink()
-    stats = sync(db, collect_groups(library), library)
+    stats = sync(db, collect_groups())
 
     assert stats["missing"] == 1
     assert db.execute("SELECT COUNT(*) AS n FROM books WHERE missing = 1").fetchone()["n"] == 1
@@ -166,12 +168,12 @@ def test_cover_not_served_when_catalog_says_it_is_stale(
 
 def test_changed_file_clears_cover_error(library: Path, db: sqlite3.Connection) -> None:
     book = make_book(library, "a.pdf")
-    sync(db, collect_groups(library), library)
+    sync(db, collect_groups())
     db.execute("UPDATE books SET cover_error = 'старая причина', has_cover = 1")
     db.commit()
 
     book.write_bytes(b"%PDF-1.4 changed content\n%%EOF\n")
-    sync(db, collect_groups(library), library)
+    sync(db, collect_groups())
 
     row = db.execute("SELECT has_cover, cover_error FROM books").fetchone()
     assert (row["has_cover"], row["cover_error"]) == (0, None)
@@ -232,17 +234,17 @@ def test_symlink_pointing_outside_library_is_rejected(
     outside = tmp_path / "секрет.pdf"
     outside.write_bytes(b"%PDF-1.4\n%%EOF\n")
     (library / "ссылка.pdf").symlink_to(outside)
-    sync(db, collect_groups(library), library)
+    sync(db, collect_groups())
 
     with pytest.raises(OutsideLibrary):
-        resolve_target("ссылка", db, library)
+        resolve_target("ссылка", db)
 
 
 def test_regular_file_inside_library_resolves(library: Path, db: sqlite3.Connection) -> None:
     make_book(library, "PLPM/01-Vozvratnye.djvu")
-    sync(db, collect_groups(library), library)
+    sync(db, collect_groups())
 
-    assert resolve_target("PLPM/01-Vozvratnye", db, library).name == "01-Vozvratnye.djvu"
+    assert resolve_target("PLPM/01-Vozvratnye", db).name == "01-Vozvratnye.djvu"
 
 
 # ---------- api_edit: край «всё пусто» ----------

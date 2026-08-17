@@ -6,15 +6,69 @@
 Библиотека читается **строго read-only** — это активные раздачи qBittorrent,
 переименование или перемещение сломает fastresume-файлы.
 
-## Запуск
+## Запуск и остановка
+
+Сервис живёт как systemd unit пользователя `booklib.service` и слушает
+http://127.0.0.1:8765.
+
+### Жизненный цикл
 
 ```bash
-systemctl --user start booklib      # http://127.0.0.1:8765
-systemctl --user status booklib
-journalctl --user -u booklib -f
+systemctl --user start booklib.service    # поднять
+systemctl --user stop booklib.service     # остановить
+systemctl --user restart booklib.service  # перезапустить
+systemctl --user status booklib.service   # состояние
 ```
 
-Автозапуск уже включён (`systemctl --user enable`). Скан выполняется при каждом старте.
+То же через make: `make restart` (перезапуск + первые строки статуса),
+`make logs`.
+
+### Логи
+
+```bash
+journalctl --user -u booklib.service -f   # живой хвост журнала
+make logs                                 # последние 50 строк
+```
+
+### Автозапуск
+
+Уже включён (`systemctl --user is-enabled booklib.service` → `enabled`). Управление:
+
+```bash
+systemctl --user enable booklib.service   # автозапуск вместе с сессией
+systemctl --user disable booklib.service  # отключить
+```
+
+Скан библиотеки выполняется при каждом старте сервиса (инкрементальный,
+на неизменной библиотеке ~0.1 с).
+
+### Ручной запуск без systemd
+
+```bash
+make serve    # то же, что uv run booklib serve
+```
+
+Останавливается по Ctrl+C. Удобно для отладки, когда журнал юнита неудобен.
+
+### Установка юнита на новой машине
+
+```bash
+mkdir -p ~/.config/systemd/user
+ln -s ~/booklib/booklib.service ~/.config/systemd/user/booklib.service
+systemctl --user daemon-reload
+systemctl --user enable --now booklib.service
+```
+
+Юнит установлен симлинком: правка `booklib.service` в репозитории меняет
+установленный юнит немедленно, поэтому после неё обязателен
+`systemctl --user daemon-reload`.
+
+### Поведение, которое не баг
+
+- Сервис поднялся сам после падения — это `Restart=on-failure` с паузой
+  `RestartSec=5`, штатная конфигурация юнита.
+- Сервис остановился при выходе из графической сессии — юнит объявлен
+  `PartOf=graphical-session.target` и живёт вместе с сессией.
 
 ## Где что лежит
 

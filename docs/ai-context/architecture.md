@@ -4,8 +4,12 @@
 
 ```
 booklib.config.settings   настройки (env BOOKLIB_*), единственный источник путей
+booklib.errors            LibraryUnavailable — общее исключение обхода и записи
+booklib.paths             library_root / relative_to_root
+booklib.db                соединение с SQLite: схема, миграции, WAL
 booklib.meta              нормализация имён файлов, эвристики названия/автора/года
-booklib.scanner           обход дерева → карточки → инкрементальный диф → SQLite
+booklib.grouping          обход дерева → карточки (BookGroup) → сводка обхода
+booklib.scanner           инкрементальный диф карточек → SQLite
 booklib.covers            превью: pdftocairo / ddjvu+Pillow / zip(epub) / base64(fb2)
 booklib.taxonomy          разделы: overrides → taxonomy.json → rules.json → «Новое»
 booklib.opener            DBus FileManager1.ShowItems, запасной xdg-open
@@ -15,7 +19,16 @@ scripts/build_taxonomy.py разовая раскладка библиотеки
 ```
 
 Зависимости идут строго вниз: `cli` → `api` → (`scanner`, `covers`, `taxonomy`,
-`opener`) → `meta`/`settings`. Обратных импортов нет.
+`opener`) → `grouping` → (`meta`, `paths`, `errors`) → `settings`.
+Обратных импортов нет.
+
+`db` стоит сбоку от этой цепочки: он зависит только от `settings`, а соединение
+получают напрямую `covers`, `opener`, `api`, `cli` и `scripts/`. Сам `scanner`
+его не импортирует — `sync(conn, ...)` принимает готовое соединение параметром.
+
+Обход дерева (`grouping`) и запись в каталог (`scanner`) разделены намеренно:
+`collect_groups` только читает диск и не знает про SQLite, `sync` только пишет
+диф и не знает про `os.walk`.
 
 ## Хранилище
 

@@ -18,6 +18,7 @@ import sqlite3
 from pathlib import Path
 
 from booklib.config.settings import get_settings
+from booklib.grouping import Kind
 
 FALLBACK_SECTION = "Новое"
 AUDIO_SECTION = "Аудио"
@@ -58,7 +59,7 @@ def apply(conn: sqlite3.Connection) -> dict[str, int]:
             stats["taxonomy"] += 1
             title = entry.get("title", row["title"])
             author = entry.get("author", row["author"])
-        elif row["kind"] == "audio":
+        elif row["kind"] == Kind.AUDIO:
             section, source = AUDIO_SECTION, "kind"
             stats["audio"] += 1
             title, author = row["title"], row["author"]
@@ -92,9 +93,9 @@ def match_text(key: str) -> str:
     return re.sub(r"[_\-.]+", " ", basename)
 
 
-def classify_new(key: str, kind: str = "book") -> tuple[str, str]:
+def classify_new(key: str, kind: Kind = Kind.BOOK) -> tuple[str, str]:
     """Раздел для карточки, которой нет в taxonomy.json (используется и в тестах)."""
-    if kind == "audio":
+    if kind == Kind.AUDIO:
         return AUDIO_SECTION, "kind"
     rules, default_section = load_rules()
     text = match_text(key)

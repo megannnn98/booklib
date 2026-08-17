@@ -10,8 +10,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from booklib.api.app import app
+from booklib.grouping import collect_groups
 from booklib.opener import BookNotFound, OutsideLibrary, resolve_target
-from booklib.scanner import collect_groups, sync
+from booklib.scanner import sync
 from booklib.taxonomy import apply as apply_sections
 from tests.conftest import make_book
 
@@ -22,7 +23,7 @@ OWN_PAGE = {"X-Booklib": "1"}
 def client(library: Path, db: sqlite3.Connection) -> TestClient:
     make_book(library, "chemistry/Шульпин - Химия - 1984.pdf")
     make_book(library, "philosophy/Эвола - Даосизм - 2020.pdf")
-    sync(db, collect_groups(library), library)
+    sync(db, collect_groups())
     apply_sections(db)
     db.commit()
     return TestClient(app)
@@ -92,7 +93,7 @@ def test_override_wins_and_survives_rescan(client: TestClient, db: sqlite3.Conne
     assert (book["title"], book["edited"]) == ("Даосизм", False)
 
 
-def test_resolve_target_rejects_path_outside_library(library: Path, db: sqlite3.Connection) -> None:
+def test_resolve_target_rejects_path_outside_library(db: sqlite3.Connection) -> None:
     """Guard от выхода за пределы библиотеки: без него nemo показал бы /etc/passwd."""
     now = time.time()
     db.execute(
@@ -104,9 +105,9 @@ def test_resolve_target_rejects_path_outside_library(library: Path, db: sqlite3.
     db.commit()
 
     with pytest.raises(OutsideLibrary):
-        resolve_target("evil", db, library)
+        resolve_target("evil", db)
 
 
-def test_resolve_target_unknown_key(library: Path, db: sqlite3.Connection) -> None:
+def test_resolve_target_unknown_key(db: sqlite3.Connection) -> None:
     with pytest.raises(BookNotFound):
-        resolve_target("нет такого", db, library)
+        resolve_target("нет такого", db)

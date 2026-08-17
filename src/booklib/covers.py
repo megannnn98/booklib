@@ -27,7 +27,8 @@ from pathlib import Path
 from PIL import Image
 
 from booklib.config.settings import get_settings
-from booklib.scanner import connect, library_root
+from booklib.db import connect
+from booklib.paths import library_root
 
 RENDERABLE_EXTS = (".pdf", ".djvu", ".djv", ".epub", ".fb2")
 
@@ -218,7 +219,7 @@ EXTRACTORS = {
 }
 
 
-def build_cover(files: list[str], destination: Path, root: Path | None = None) -> str:
+def build_cover(files: list[str], destination: Path) -> str:
     """Пробовать файлы книги по порядку предпочтения, пока обложка не получится.
 
     Возвращает расширение сработавшего файла. Бросает CoverError, если не смог ни один.
@@ -237,7 +238,7 @@ def build_cover(files: list[str], destination: Path, root: Path | None = None) -
         extractor = EXTRACTORS.get(extension)
         if extractor is None:
             continue
-        source = library_root(root) / relative
+        source = library_root() / relative
         if not source.exists():
             errors.append(f"{extension}: файл исчез")
             continue

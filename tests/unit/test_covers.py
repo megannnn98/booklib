@@ -16,14 +16,15 @@ import pytest
 from PIL import Image
 
 from booklib import covers
-from booklib.scanner import collect_groups, sync
+from booklib.grouping import collect_groups
+from booklib.scanner import sync
 from tests.conftest import make_book
 
 
 @pytest.fixture
 def catalog(library: Path, db: sqlite3.Connection) -> sqlite3.Connection:
     make_book(library, "chemistry/Книга.pdf")
-    sync(db, collect_groups(library), library)
+    sync(db, collect_groups())
     db.commit()
     return db
 
