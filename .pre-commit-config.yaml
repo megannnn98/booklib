@@ -2,7 +2,11 @@ repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.0
     hooks:
+      # markdown добавлен намеренно: ruff форматирует python-блоки внутри .md,
+      # и CI (`ruff format --check src tests scripts`) это проверяет. Без него
+      # хук молчал локально, а сборка падала на README со сниппетом.
       - id: ruff-format
+        types_or: [python, pyi, jupyter, markdown]
       - id: ruff
         args: [--fix]
 
