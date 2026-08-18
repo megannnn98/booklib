@@ -29,7 +29,7 @@ from booklib.taxonomy import load_taxonomy
 from booklib.tools import REQUIRED_TOOLS
 
 SORTS = {
-    "title": "title COLLATE NOCASE ASC",
+    "title": "title COLLATE unicode_ci ASC",
     "added": "added_at DESC",
     "year": "year IS NULL, year DESC",
     "size": "size DESC",
@@ -78,6 +78,12 @@ def db() -> sqlite3.Connection:
     conn = connect()
     # LOWER() в SQLite не умеет кириллицу — регистронезависимый поиск делаем питоном
     conn.create_function("pylower", 1, lambda value: value.lower() if value else "")
+    # COLLATE NOCASE тоже ASCII-only: 'абрикос' со строчной уезжал в хвост списка.
+    # unicode_ci — питоновская коллация через casefold, регистрируется на соединении.
+    conn.create_collation(
+        "unicode_ci",
+        lambda a, b: (a.casefold() > b.casefold()) - (a.casefold() < b.casefold()),
+    )
     return conn
 
 
