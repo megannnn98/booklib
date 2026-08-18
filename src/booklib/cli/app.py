@@ -13,10 +13,11 @@ import uvicorn
 from booklib import covers, opener
 from booklib.api.app import app as fastapi_app
 from booklib.api.app import rescan
-from booklib.config.settings import get_settings
+from booklib.config.settings import field_source, get_settings, write_runtime_config
 from booklib.db import connect
 from booklib.errors import LibraryUnavailable
 from booklib.grouping import collect_groups, stats_report
+from booklib.rootcheck import InvalidRoot, validate_root
 from booklib.scanner import sync
 from booklib.taxonomy import apply as apply_sections
 from booklib.taxonomy import classify_new
@@ -124,6 +125,57 @@ def classify_cmd(path: str) -> None:
     typer.echo(f"{path}\n  -> {section}  (источник: {source})")
 
 
+@app.command("config")
+def config_cmd(
+    show: bool = typer.Option(False, "--show", help="активные настройки и источник каждого"),
+    root: str | None = typer.Option(None, "--root", help="сменить корень библиотеки"),
+    reset: bool = typer.Option(
+        False, "--reset", help="снять рантайм-конфиг (вернуться к env/умолчанию)"
+    ),
+) -> None:
+    """Рантайм-конфиг: cache_dir/config.json поверх env.
+
+    Без флагов и с --show печатает активные настройки и их источники
+    (config > env > .env > умолчание).
+    """
+    if reset:
+        path = get_settings().runtime_config_path
+        path.unlink(missing_ok=True)
+        get_settings.cache_clear()
+        typer.echo(f"рантайм-конфиг снят: {path}")
+        return
+
+    if root:
+        try:
+            resolved = validate_root(root)
+        except InvalidRoot as exc:
+            typer.secho(f"ОШИБКА: {exc}", fg="red", err=True)
+            raise typer.Exit(2) from exc
+        write_runtime_config(root=str(resolved))
+        typer.echo(f"корень применён: {resolved}")
+        try:
+            stats = rescan()
+        except LibraryUnavailable as exc:
+            typer.secho(f"ОШИБКА: корень применён, но скан невозможен: {exc}", fg="red", err=True)
+            raise typer.Exit(2) from exc
+        typer.echo("  ".join(f"{k}={v}" for k, v in stats.items()))
+        return
+
+    if not show:
+        show = True
+    settings = get_settings()
+    if show:
+        typer.echo(f"root:          {settings.root}   (источник: {field_source('root')})")
+        typer.echo(
+            f"scan_on_start: {settings.scan_on_start}   (источник: {field_source('scan_on_start')})"
+        )
+        typer.echo(f"cache_dir:     {settings.cache_dir}")
+        typer.echo(f"слот:          {settings.slot_dir}")
+        typer.echo(f"СУБД:          {settings.db_path}")
+        typer.echo(f"обложки:       {settings.cover_dir}")
+        typer.echo(f"файл конфига:  {settings.runtime_config_path}")
+
+
 @app.command("open")
 def open_cmd(
     key: str,
@@ -154,6 +206,8 @@ def doctor() -> None:
     mounted = settings.root.is_dir()
     typer.echo(f"{'✓' if mounted else '✗'} библиотека   {settings.root}")
     problems += 0 if mounted else 1
+    typer.echo(f"корень:      источник {field_source('root')}")
+    typer.echo(f"слот:        {settings.slot_dir}")
 
     if settings.db_path.exists():
         conn = connect()
