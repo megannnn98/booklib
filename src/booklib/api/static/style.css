@@ -93,7 +93,7 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
   outline-offset: 1px;
 }
 
-#sort, #rescan {
+#sort, #rescan, #settingsBtn {
   padding: 9px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -201,9 +201,9 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
 
 .card { position: relative; }
 
-/* ---------- диалог правки ---------- */
+/* ---------- диалоги ---------- */
 
-#editor {
+#editor, #settings {
   width: min(440px, 92vw);
   padding: 20px;
   border: 1px solid var(--line);
@@ -212,8 +212,8 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
   color: var(--text);
 }
 
-#editor::backdrop { background: rgba(0, 0, 0, 0.6); }
-#editor h2 { margin: 0 0 4px; font-size: 16px; color: var(--accent); }
+#editor::backdrop, #settings::backdrop { background: rgba(0, 0, 0, 0.6); }
+#editor h2, #settings h2 { margin: 0 0 4px; font-size: 16px; color: var(--accent); }
 
 #editor #e-key {
   margin: 0 0 14px;
@@ -222,14 +222,14 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
   word-break: break-all;
 }
 
-#editor label {
+#editor label, #settings label {
   display: block;
   margin-bottom: 10px;
   color: var(--muted);
   font-size: 12px;
 }
 
-#editor input {
+#editor input, #settings input {
   display: block;
   width: 100%;
   margin-top: 4px;
@@ -241,7 +241,7 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
   font: 14px/1.4 inherit;
 }
 
-#editor menu {
+#editor menu, #settings menu {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
@@ -249,7 +249,7 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
   padding: 0;
 }
 
-#editor button {
+#editor button, #settings button {
   padding: 8px 14px;
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -259,7 +259,34 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
   cursor: pointer;
 }
 
-#editor button.primary { background: var(--accent); border-color: var(--accent); color: #14161a; }
+#editor button.primary, #settings button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #14161a;
+}
+
+#editor button:disabled, #settings button:disabled { opacity: 0.5; cursor: default; }
+
+/* настройки: строка «поле пути + Проверить», результат проверки */
+#s-current {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+#s-row { display: flex; gap: 8px; }
+#s-row input { flex: 1; margin-top: 4px; }
+#s-row button { flex: 0 0 auto; margin-top: 4px; white-space: nowrap; }
+
+#s-preview, #s-info {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#s-preview.error { color: var(--danger); }
+#s-preview.warn { color: var(--accent); }
 
 .title {
   font-size: 12.5px;

@@ -59,6 +59,26 @@ def test_rescan_and_edit_require_own_page_header(client: TestClient) -> None:
     assert client.post("/api/book", json={"key": "x", "title": "y"}).status_code == 403
 
 
+def test_settings_require_own_page_header(client: TestClient) -> None:
+    """/api/settings тоже под Depends(require_own_page): смена корня меняет
+    конфиг и запускает скан."""
+    assert client.get("/api/settings").status_code == 403
+    assert client.get("/api/settings/preview", params={"root": "/tmp"}).status_code == 403
+    assert client.post("/api/settings", json={"root": "/tmp"}).status_code == 403
+
+
+def test_settings_report(client: TestClient, library: Path) -> None:
+    settings = client.get("/api/settings", headers=OWN_PAGE).json()
+
+    assert settings["root"] == str(library)  # BOOKLIB_ROOT из conftest
+    assert settings["root_source"] == "env"
+    assert settings["mounted"] is True
+    assert settings["db"].endswith("library.db")
+    assert "roots" in settings["db"]
+    assert settings["read_only"]["host"] == "127.0.0.1"
+    assert settings["read_only"]["tools"]["pdftocairo"] is True
+
+
 def test_open_unknown_key_is_404(client: TestClient) -> None:
     response = client.post("/api/open", json={"key": "../../etc/passwd"}, headers=OWN_PAGE)
 

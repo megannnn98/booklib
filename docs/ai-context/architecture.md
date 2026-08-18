@@ -3,7 +3,9 @@
 ## Слои
 
 ```
-booklib.config.settings   настройки (env BOOKLIB_*), единственный источник путей
+booklib.config.settings   настройки: config.json → env BOOKLIB_* → .env → умолчания
+booklib.rootcheck         валидация и предпросмотр нового корня
+booklib.tools             REQUIRED_TOOLS (общий для cli и api)
 booklib.errors            LibraryUnavailable — общее исключение обхода и записи
 booklib.paths             library_root / relative_to_root
 booklib.db                соединение с SQLite: схема, миграции, WAL
@@ -19,8 +21,11 @@ scripts/build_taxonomy.py разовая раскладка библиотеки
 ```
 
 Зависимости идут строго вниз: `cli` → `api` → (`scanner`, `covers`, `taxonomy`,
-`opener`) → `grouping` → (`meta`, `paths`, `errors`) → `settings`.
-Обратных импортов нет.
+`opener`, `rootcheck`) → `grouping` → (`meta`, `paths`, `errors`) → `settings`.
+Обратных импортов нет. `rootcheck` (как и `grouping`) читает расширения
+`BOOK_EXTS`/`AUDIO_EXTS` из `grouping` — поэтому он стоит между `api` и `grouping`.
+`tools` — константа без зависимостей; её импортируют и `cli`, и `api`, а держать
+её в `cli` нельзя: `cli` импортирует `api` наверх, обратный импорт — цикл.
 
 `db` стоит сбоку от этой цепочки: он зависит только от `settings`, а соединение
 получают напрямую `covers`, `opener`, `api`, `cli` и `scripts/`. Сам `scanner`
@@ -35,10 +40,12 @@ scripts/build_taxonomy.py разовая раскладка библиотеки
 | Что | Где | Почему |
 |---|---|---|
 | Книги | `BOOKLIB_ROOT` | read-only, активные раздачи qBittorrent |
-| Каталог | `~/.cache/booklib/library.db` | внешний диск может отвалиться |
-| Превью | `~/.cache/booklib/covers/<sha1>.jpg` | 12 МБ, восстановимо из книг |
+| Слот состояния | `~/.cache/booklib/roots/<sha1(root)[:12]>/` | СУБД и обложки скоупятся по корню; внутри `root.txt` |
+| Каталог | `~/.cache/booklib/roots/<sha1(root)[:12]>/library.db` | внешний диск может отвалиться; смена корня — свой слот |
+| Превью | `~/.cache/booklib/roots/<sha1(root)[:12]>/covers/<sha1>.jpg` | 12 МБ, восстановимо из книг |
+| Рантайм-конфиг | `~/.cache/booklib/config.json` | корень/scan_on_start из UI, перекрывает env |
 | Раскладка | `config/taxonomy.json` | НЕ в git — опись личной библиотеки |
-| Правила | `config/rules.json` | в репозитории |
+| Правила | `src/booklib/config/rules.json` (пакетный дефолт, в git), оверрайд — `config/rules.json` | правила должны работать и при установке колесом |
 | Ручные правки | таблица `overrides` | переживают рескан и смену taxonomy |
 
 ## Модель карточки
@@ -61,11 +68,17 @@ scripts/build_taxonomy.py разовая раскладка библиотеки
 | Инвариант | Тест |
 |---|---|
 | Пустой скан не стирает каталог | `test_empty_scan_does_not_wipe_catalog` |
+| Guard молчит на свежем корне (known = 0) | `test_guard_does_not_fire_on_fresh_root` |
 | Пропавшая книга помечается, а не удаляется | `test_deleted_book_is_marked_missing_not_removed` |
 | Путь книги не выходит за корень | `test_resolve_target_rejects_path_outside_library` |
 | Мутирующие роуты требуют `X-Booklib` | `test_open_requires_own_page_header` |
+| `/api/settings` тоже требует `X-Booklib` | `test_settings_require_own_page_header` |
 | Правки переживают рескан | `test_override_wins_and_survives_rescan` |
+| Правки переживают смену корня и возврат | `test_edits_survive_switch_away_and_back` |
+| Смена корня не трогает старый слот | `test_switch_root_gets_own_slot` |
+| Legacy-состояние мигрирует в слот | `test_legacy_state_migrates_into_slot` |
 | Правила смотрят на имя файла, не на папку | `test_match_text_ignores_directory` |
 | Кириллица ищется без учёта регистра | `test_search_is_case_insensitive_for_cyrillic` |
+| Кириллица сортируется без учёта регистра | `test_cyrillic_title_sort_ignores_case` |
 
 Тесты работают на временном корне и настоящую библиотеку не трогают.

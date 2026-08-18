@@ -10,6 +10,14 @@ const el = {
   search: document.getElementById("search"),
   sort: document.getElementById("sort"),
   rescan: document.getElementById("rescan"),
+  settingsBtn: document.getElementById("settingsBtn"),
+  settings: document.getElementById("settings"),
+  sCurrent: document.getElementById("s-current"),
+  sRoot: document.getElementById("s-root"),
+  sCheck: document.getElementById("s-check"),
+  sPreview: document.getElementById("s-preview"),
+  sInfo: document.getElementById("s-info"),
+  sApply: document.getElementById("s-apply"),
   toast: document.getElementById("toast"),
   editor: document.getElementById("editor"),
   eKey: document.getElementById("e-key"),
@@ -181,6 +189,86 @@ function editBook(book) {
   };
 }
 
+function setPreview(message, kind = "") {
+  el.sPreview.textContent = message;
+  el.sPreview.className = kind;
+  el.sPreview.hidden = !message;
+}
+
+async function checkRoot() {
+  const value = el.sRoot.value.trim();
+  setPreview("");
+  el.sApply.disabled = true;
+  if (!value) {
+    setPreview("Укажите путь к папке библиотеки", "warn");
+    return;
+  }
+  el.sCheck.disabled = true;
+  try {
+    const data = await api(`/api/settings/preview?root=${encodeURIComponent(value)}`);
+    let message = `${data.files} ${plural(data.files, "файл", "файла", "файлов")}`
+      + `: ${data.books} ${plural(data.books, "книжный", "книжных", "книжных")}`;
+    if (data.audio) message += `, ${data.audio} аудио`;
+    let kind = "";
+    if (data.truncated) {
+      message += " — обход прерван по бюджету, числа приблизительные";
+      kind = "warn";
+    } else if (data.books + data.audio === 0) {
+      message += " — в этой папке нет книжных файлов, каталог станет пустым";
+      kind = "warn";
+    }
+    setPreview(message, kind);
+    el.sApply.disabled = false;
+  } catch (error) {
+    setPreview(error.message, "error");
+  } finally {
+    el.sCheck.disabled = false;
+  }
+}
+
+function openSettings() {
+  el.sApply.disabled = true;
+  el.sRoot.disabled = true;
+  setPreview("");
+  el.settings.returnValue = "cancel";
+  el.settings.showModal();
+
+  (async () => {
+    try {
+      const data = await api("/api/settings");
+      const sourceNames = { config: "рантайм-конфиг", env: "окружение", default: "по умолчанию" };
+      el.sCurrent.textContent = `сейчас: ${data.root} (${sourceNames[data.root_source] || data.root_source})`;
+      el.sRoot.value = data.root;
+      el.sRoot.disabled = false;
+      const tools = Object.entries(data.read_only.tools);
+      const missing = tools.filter(([, ok]) => !ok).map(([name]) => name);
+      el.sInfo.textContent = missing.length
+        ? `не найдены: ${missing.join(", ")} — обложки могут не генерироваться`
+        : `обложки: ${data.read_only.cover_width}×${data.read_only.cover_max_height}, `
+          + `требуемые утилиты на месте`;
+    } catch (error) {
+      el.sCurrent.textContent = "";
+      setPreview(`Не удалось загрузить настройки: ${error.message}`, "error");
+    }
+  })();
+
+  el.settings.onclose = async () => {
+    if (el.settings.returnValue !== "apply") return;
+    try {
+      const result = await api("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ root: el.sRoot.value.trim() }),
+      });
+      toast(`Корень сменён: добавлено ${result.added}, обложек ${result.covers_built}`
+        + ` (${result.elapsed} с)`);
+      await Promise.all([loadStatus(), loadSections(), loadBooks()]);
+    } catch (error) {
+      toast(`Не применилось: ${error.message}`, true);
+    }
+  };
+}
+
 async function openBook(book) {
   try {
     const result = await api("/api/open", {
@@ -218,6 +306,15 @@ el.search.addEventListener("input", () => {
 el.sort.addEventListener("change", () => {
   state.sort = el.sort.value;
   loadBooks();
+});
+
+el.settingsBtn.addEventListener("click", openSettings);
+el.sCheck.addEventListener("click", checkRoot);
+el.sRoot.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    checkRoot();
+  }
 });
 
 el.rescan.addEventListener("click", async () => {

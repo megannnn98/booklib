@@ -1,10 +1,51 @@
 # booklib
 
-Локальный веб-каталог библиотеки `/run/media/b/DOWNLOADS/books`: превью на каждую книгу,
-разделы по смыслу, клик открывает папку в nemo с выделенным файлом.
+Локальный веб-каталог библиотеки — каталога, указанного в настройках (по умолчанию
+`~/Books`): превью на каждую книгу, разделы по смыслу, клик открывает папку
+в файловом менеджере с выделенным файлом.
 
 Библиотека читается **строго read-only** — это активные раздачи qBittorrent,
 переименование или перемещение сломает fastresume-файлы.
+
+## Установка на другой машине
+
+Нужны Python 3.12+, [uv](https://docs.astral.sh/uv/) и три системные утилиты
+(их проверяет `booklib doctor`):
+
+| Утилита      | Зачем                              | Arch          | Debian/Ubuntu     |
+|--------------|------------------------------------|---------------|-------------------|
+| `pdftocairo` | обложки PDF                        | `poppler`     | `poppler-utils`   |
+| `ddjvu`      | обложки DJVU                       | `djvulibre`   | `djvulibre-bin`   |
+| `gdbus`      | открытие папки в файловом менеджере | `glib2`      | `libglib2.0-bin`  |
+
+Без `pdftocairo` и `ddjvu` витрина откроется, но обложек не будет ни у одной
+книги — а это вся её суть. Только Linux с рабочим столом GTK/KDE: открытие
+папки идёт через DBus `org.freedesktop.FileManager1`, запасной путь —
+`xdg-open`. На macOS/Windows витрина откроется, но клик по карточке вернёт
+ошибку.
+
+```bash
+git clone <repo> ~/booklib
+cd ~/booklib
+uv sync --dev
+uv run booklib doctor   # что не хватает — скажет здесь
+```
+
+### Первый запуск
+
+```bash
+uv run booklib serve    # или systemd-юнит, см. ниже
+```
+
+Открыть http://127.0.0.1:8765, шестерёнка в шапке → указать путь к своим
+книгам → «Применить». То же из консоли:
+
+```bash
+uv run booklib config --root ~/Books   # вместо ~/Books — свой путь
+```
+
+Скан библиотеки выполняется при старте сервиса и по кнопке «Обновить»;
+обложки догенерируются командой `uv run booklib covers`.
 
 ## Запуск и остановка
 
@@ -53,6 +94,7 @@ make serve    # то же, что uv run booklib serve
 ### Установка юнита на новой машине
 
 ```bash
+command -v uv   # должен напечатать ~/.local/bin/uv
 mkdir -p ~/.config/systemd/user
 ln -s ~/booklib/booklib.service ~/.config/systemd/user/booklib.service
 systemctl --user daemon-reload
@@ -62,6 +104,11 @@ systemctl --user enable --now booklib.service
 Юнит установлен симлинком: правка `booklib.service` в репозитории меняет
 установленный юнит немедленно, поэтому после неё обязателен
 `systemctl --user daemon-reload`.
+
+`ExecStart` юнита прибит к `%h/.local/bin/uv` и `%h/booklib`. Если `command -v uv`
+показал другой путь (например, `uv` из менеджера пакетов), поправьте
+`ExecStart` в `booklib.service` — под `systemd --user` PATH часто не включает
+`~/.local/bin`, и отказ будет непрозрачным.
 
 ### Поведение, которое не баг
 
@@ -77,15 +124,25 @@ systemctl --user enable --now booklib.service
 | Код | `~/booklib/src/booklib` |
 | СУБД и кэш обложек | `~/.cache/booklib/{library.db,covers/}` |
 | Разовая раскладка | `~/booklib/config/taxonomy.json` (локально, не в git) |
-| Правила для новых книг | `~/booklib/config/rules.json` |
+| Правила для новых книг | пакетные `~/booklib/src/booklib/config/rules.json`, оверрайд — `~/booklib/config/rules.json` |
 | Ручные правки из UI | таблица `overrides` в СУБД |
 
 ## Раскладка библиотеки
 
-`config/taxonomy.json` — это опись конкретной библиотеки, поэтому в репозиторий она
-не коммитится. Формат показан в `config/taxonomy.example.json`, а как её собрать — в `scripts/README.md`. Без этого файла
-каталог тоже работает: все книги разложатся по `config/rules.json`, остальное уедет
-в раздел «Новое».
+Раздел «Новое» — **нормальное стартовое состояние**, а не поломка: новые
+поступления раскладываются по regex-правилам из
+`src/booklib/config/rules.json` (имя файла, папка игнорируется намеренно),
+и на чужой библиотеке так опознается лишь малая часть — остальное честно
+уедет в «Новое». Смысловая раскладка живёт в `config/taxonomy.json`,
+которого в репозитории нет: это опись конкретной библиотеки (формат —
+`config/taxonomy.example.json`, как собрать — `scripts/README.md`).
+
+Свои разделы набираются двумя способами:
+
+- правка карточек в UI — ложится в таблицу `overrides` и переживает ресканы;
+- правила для новых книг — файл `config/rules.json` в репозитории поверх
+  пакетного `src/booklib/config/rules.json`. Какой именно файл взят,
+  печатает `booklib doctor`.
 
 ## Модель данных
 
