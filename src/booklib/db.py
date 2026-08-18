@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -86,8 +87,50 @@ def _enable_wal(conn: sqlite3.Connection) -> None:
         time.sleep(WAL_RETRY_DELAY_S)
 
 
+def migrate_legacy_state() -> None:
+    """Одноразовый перенос cache_dir/library.db → слот текущего корня.
+
+    До слотов состояния всё изменяемое лежало прямо в cache_dir. Без переноса
+    после обновления 353 карточки и накопленные правки overrides «исчезли» бы
+    (в слоте создалась бы пустая СУБД). os.rename — тот же ФС, атомарно.
+    Срабатывает только когда слот ещё пуст: вернуться на старый корень —
+    значит попасть в населённую СУБД, трогать её не нужно.
+    """
+    settings = get_settings()
+    legacy_db = settings.cache_dir / "library.db"
+    if not legacy_db.exists() or settings.db_path.exists():
+        return
+
+    slot = settings.slot_dir
+    slot.mkdir(parents=True, exist_ok=True)
+    # WAL/SHM прикладываются к своей СУБД: без них данные из журнала пропадут.
+    sources = (
+        legacy_db,
+        legacy_db.with_suffix(".db-wal"),
+        legacy_db.with_suffix(".db-shm"),
+        settings.cache_dir / "covers",
+    )
+    for source in sources:
+        if not source.exists():
+            continue
+        try:
+            os.rename(source, slot / source.name)
+        except OSError as exc:
+            raise RuntimeError(
+                f"не удалось перенести {source.name} в слот состояния {slot}: {exc}"
+            ) from exc
+
+
 def connect(db_path: Path | None = None) -> sqlite3.Connection:
-    db_path = db_path if db_path is not None else get_settings().db_path
+    if db_path is None:
+        migrate_legacy_state()
+        settings = get_settings()
+        db_path = settings.db_path
+        # root.txt — литеральный путь корня, чтобы слот читался глазами.
+        marker = settings.slot_dir / "root.txt"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        if not marker.exists():
+            marker.write_text(str(settings.root), encoding="utf-8")
     db_path.parent.mkdir(parents=True, exist_ok=True)
     # timeout задаётся при открытии, а НЕ отдельным PRAGMA после: переключение
     # журнала в WAL требует эксклюзивной блокировки, и при одновременном открытии

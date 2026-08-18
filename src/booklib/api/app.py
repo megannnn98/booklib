@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import threading
 import time
@@ -17,13 +18,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from booklib import covers, opener
-from booklib.config.settings import get_settings
+from booklib.config.settings import field_source, get_settings, write_runtime_config
 from booklib.db import connect
 from booklib.errors import LibraryUnavailable
 from booklib.grouping import collect_groups
+from booklib.rootcheck import InvalidRoot, preview_root, validate_root
 from booklib.scanner import sync
 from booklib.taxonomy import apply as apply_sections
 from booklib.taxonomy import load_taxonomy
+from booklib.tools import REQUIRED_TOOLS
 
 SORTS = {
     "title": "title COLLATE NOCASE ASC",
@@ -49,6 +52,13 @@ class EditRequest(BaseModel):
     author: str | None = None
     section: str | None = None
     reset: bool = False
+
+
+class SettingsRequest(BaseModel):
+    """Смена корня библиотеки. scan_on_start опционален — для CLI-паритета."""
+
+    root: str
+    scan_on_start: bool | None = None
 
 
 def require_own_page(x_booklib: str | None = Header(default=None)) -> None:
@@ -227,6 +237,69 @@ def api_rescan() -> JSONResponse:
         return JSONResponse(rescan())
     except LibraryUnavailable as exc:
         return JSONResponse({"error": str(exc)}, status_code=503)
+
+
+@app.get("/api/settings", dependencies=[Depends(require_own_page)])
+def api_settings() -> dict:
+    """Активные настройки + read-only справка. Смена корня — через POST."""
+    settings = get_settings()
+    return {
+        "root": str(settings.root),
+        "root_source": field_source("root"),
+        "scan_on_start": settings.scan_on_start,
+        "db": str(settings.db_path),
+        "cover_dir": str(settings.cover_dir),
+        "mounted": library_mounted(),
+        "read_only": {
+            "host": settings.host,
+            "port": settings.port,
+            "cover_width": settings.cover_width,
+            "cover_max_height": settings.cover_max_height,
+            "cover_quality": settings.cover_quality,
+            "render_timeout_s": settings.render_timeout_s,
+            "tools": {tool: shutil.which(tool) is not None for tool in REQUIRED_TOOLS},
+        },
+    }
+
+
+@app.get("/api/settings/preview", dependencies=[Depends(require_own_page)])
+def api_settings_preview(root: str) -> dict:
+    """Предпросмотр нового корня: валидация + лёгкий подсчёт книг/аудио.
+
+    Ноль книг — не ошибка, а поле в ответе: пользователь вправе завести новую
+    библиотеку с пустой папки, UI покажет предупреждение.
+    """
+    try:
+        path = validate_root(root)
+    except InvalidRoot as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"root": str(path), **preview_root(path)}
+
+
+@app.post("/api/settings", dependencies=[Depends(require_own_page)])
+def api_update_settings(request: SettingsRequest) -> JSONResponse:
+    """Провалидировать, применить новый корень и сразу пересканировать.
+
+    Под тем же замком, что и /api/rescan: смена корня не должна пересечься
+    с параллельным сканом. Конфиг записывается ДО рескана: если новый корень
+    оказался недоступен, выбор уже применён (он был провалидирован), а 503
+    объясняет, почему каталог пуст.
+    """
+    try:
+        path = validate_root(request.root)
+    except InvalidRoot as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    fields: dict[str, object] = {"root": str(path)}
+    if request.scan_on_start is not None:
+        fields["scan_on_start"] = request.scan_on_start
+    write_runtime_config(**fields)
+
+    with _RESCAN_LOCK:
+        try:
+            return JSONResponse(_rescan())
+        except LibraryUnavailable as exc:
+            return JSONResponse({"error": str(exc)}, status_code=503)
 
 
 @app.post("/api/open", dependencies=[Depends(require_own_page)])

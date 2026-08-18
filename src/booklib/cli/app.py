@@ -20,11 +20,9 @@ from booklib.grouping import collect_groups, stats_report
 from booklib.scanner import sync
 from booklib.taxonomy import apply as apply_sections
 from booklib.taxonomy import classify_new
+from booklib.tools import REQUIRED_TOOLS
 
 app = typer.Typer(help="Локальный веб-каталог библиотеки", no_args_is_help=True)
-
-# Внешние утилиты, без которых часть функциональности отваливается молча.
-REQUIRED_TOOLS = ("pdftocairo", "ddjvu", "gdbus")
 
 
 @app.command()
