@@ -37,18 +37,20 @@ def validate_root(value: str) -> Path:
     if not os.access(candidate, os.R_OK | os.X_OK):
         raise InvalidRoot(f"нет доступа на чтение: {candidate}")
 
-    cache_dir = get_settings().cache_dir.resolve()
-    if cache_dir.is_relative_to(candidate):
-        raise InvalidRoot(
-            f"путь включает кэш booklib ({cache_dir}) — библиотека не может жить в своём кэше"
-        )
-
+    # Сначала системные пути, потом кэш: "/" — и родитель кэша, и системный,
+    # и сообщение про системный путь точнее.
     for system in _system_paths():
         # "/" — родитель всего, поэтому для него запрещено только равенство;
         # остальные системные каталоги нельзя и обходить целиком.
         inside = candidate.is_relative_to(system) and system != Path("/")
         if candidate == system or inside:
             raise InvalidRoot(f"системный путь не подходит как корень библиотеки: {candidate}")
+
+    cache_dir = get_settings().cache_dir.resolve()
+    if cache_dir.is_relative_to(candidate):
+        raise InvalidRoot(
+            f"путь включает кэш booklib ({cache_dir}) — библиотека не может жить в своём кэше"
+        )
 
     return candidate
 
