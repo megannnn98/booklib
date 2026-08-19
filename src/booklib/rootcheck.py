@@ -26,33 +26,32 @@ class InvalidRoot(ValueError):
     """Корень не годится — с человекочитаемой причиной."""
 
 
-def _deny_exact() -> list[Path]:
-    # $HOME вычисляется динамически — он свой у каждого. Сам $HOME запрещён,
-    # но ~/Books (умолчание из настроек) — законный корень.
-    return [Path(path) for path in (*DENY_EXACT, str(Path.home()))]
+def deny_reason(candidate: Path) -> str | None:
+    """Причина отказа по форме пути (без обращения к диску), None — путь допустим.
 
-
-def _deny_tree() -> list[Path]:
-    return [Path(path) for path in DENY_TREE]
-
-
-def _deny_reason(candidate: Path) -> str | None:
-    """Причина отказа по форме пути (без обращения к диску), None — путь допустим."""
-    for path in _deny_exact():
-        if candidate == path:
-            return f"системный путь не подходит как корень библиотеки: {candidate}"
-    for path in _deny_tree():
-        if candidate.is_relative_to(path):
-            return f"системный путь не подходит как корень библиотеки: {candidate}"
+    Публичная намеренно: это единственная часть валидатора, которую можно
+    проверить без файловой системы, и тесты формы путей идут прямо сюда.
+    $HOME считается динамически — он свой у каждого; сам $HOME запрещён, а
+    ~/Books (умолчание настроек) законен.
+    """
+    exact = [Path(path) for path in (*DENY_EXACT, str(Path.home()))]
+    if candidate in exact or any(candidate.is_relative_to(path) for path in DENY_TREE):
+        return f"системный путь не подходит как корень библиотеки: {candidate}"
     return None
 
 
 def validate_root(value: str) -> Path:
     """Разобрать, нормализовать и проверить корень. Возвращает resolved Path."""
-    if not value.strip():
+    raw = value.strip()
+    if not raw:
         raise InvalidRoot("путь не указан")
-    candidate = Path(value).expanduser().resolve()
-    if candidate == Path.cwd():
+    candidate = Path(raw).expanduser().resolve()
+    # Отвергаем ОТНОСИТЕЛЬНЫЙ ввод, резолвящийся в cwd ('.', './', '././',
+    # 'sub/..'): у сервиса WorkingDirectory=%h/booklib, и корнем стал бы сам
+    # репозиторий — книг нет, known = 0, guard молчит, витрина пустеет молча.
+    # Абсолютный путь, совпавший с cwd, законен: библиотека, из которой запущен
+    # процесс, — нормальный корень, и сравнение resolved-пути с cwd его запрещало.
+    if not Path(raw).is_absolute() and candidate == Path.cwd():
         raise InvalidRoot("путь указывает на текущий каталог")
 
     if not candidate.exists():
@@ -64,7 +63,7 @@ def validate_root(value: str) -> Path:
 
     # Сначала системные пути, потом кэш: "/" — и родитель кэша, и системный,
     # и сообщение про системный путь точнее.
-    reason = _deny_reason(candidate)
+    reason = deny_reason(candidate)
     if reason is not None:
         raise InvalidRoot(reason)
 
@@ -80,26 +79,28 @@ def validate_root(value: str) -> Path:
 def preview_root(path: Path, budget: int = 20_000) -> dict[str, int | bool]:
     """Лёгкий обход: посчитать книги/аудио по расширениям, выйти по бюджету.
 
-    Возвращает {files, books, audio, truncated}. Скрытые каталоги и файлы
-    пропускаются как в collect_groups — предпросмотр не должен показывать
-    числа, которых не будет при реальном скане.
+    Бюджет ограничивает ВСЕ просмотренные записи, а не только книжные: каталог,
+    набитый не-книжными файлами (.nfo, .jpg, node_modules), иначе обходился бы
+    целиком и держал поток uvicorn — а /api/settings/preview синхронная ручка.
+    Возвращает {files (= books+audio), books, audio, truncated}; files выводим
+    для читаемости, а не как независимый счётчик.
     """
-    files = books = audio = 0
+    scanned = books = audio = 0
     truncated = False
     for _dirpath, dirnames, filenames in os.walk(path):
         dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
         for filename in sorted(filenames):
             if filename.startswith("."):
                 continue
+            scanned += 1
             ext = Path(filename).suffix.lower()
             if ext in BOOK_EXTS:
                 books += 1
             elif ext in AUDIO_EXTS:
                 audio += 1
-            else:
-                continue
-            files += 1
-            if files >= budget:
+            if scanned >= budget:
                 truncated = True
-                return {"files": files, "books": books, "audio": audio, "truncated": True}
-    return {"files": files, "books": books, "audio": audio, "truncated": truncated}
+                break
+        if truncated:
+            break
+    return {"files": books + audio, "books": books, "audio": audio, "truncated": truncated}

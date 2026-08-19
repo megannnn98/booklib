@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from booklib.config.settings import get_settings
-from booklib.rootcheck import InvalidRoot, _deny_reason, preview_root, validate_root
+from booklib.rootcheck import InvalidRoot, deny_reason, preview_root, validate_root
 from tests.conftest import make_book
 
 
@@ -24,11 +24,30 @@ def test_validate_rejects_file(tmp_path: Path) -> None:
         validate_root(str(path))
 
 
-@pytest.mark.parametrize("bad", ["", "   ", "."])
+@pytest.mark.parametrize("bad", ["", "   ", ".", "./", "././", "sub/.."])
 def test_validate_rejects_empty_and_cwd(bad: str) -> None:
-    """Пустая строка и '.' резолвятся в cwd — не должны становиться корнем."""
+    """Относительный ввод, резолвящийся в cwd, корнем быть не может.
+
+    Не только '' и '.': './/', '././' и 'sub/..' тоже дают cwd, а у сервиса
+    WorkingDirectory=%h/booklib — корнем стал бы сам репозиторий.
+    """
     with pytest.raises(InvalidRoot, match="путь не указан|текущий каталог"):
         validate_root(bad)
+
+
+def test_validate_accepts_library_equal_to_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Библиотека, из которой запущен процесс, — законный корень.
+
+    Отказ был по сравнению resolved-пути с cwd, хотя запрещать надо было ввод
+    ('' и '.'). Мутация: вернуть `candidate == Path.cwd()` — тест падает.
+    """
+    library = tmp_path / "library"
+    library.mkdir()
+    monkeypatch.chdir(library)
+
+    assert validate_root(str(library)) == library.resolve()
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root читает всё — os.access не сработает")
@@ -53,12 +72,12 @@ def test_validate_rejects_system_paths(tmp_path: Path) -> None:
 def test_deny_exact_rejects_mount_roots_themselves() -> None:
     """Каталоги монтирования и $HOME запрещены сами по себе — но не под ними."""
     for bad in ("/", "/home", "/media", "/mnt", "/run", "/run/media", str(Path.home())):
-        assert _deny_reason(Path(bad)) is not None
+        assert deny_reason(Path(bad)) is not None
 
 
 def test_deny_tree_rejects_system_subtrees() -> None:
     for bad in ("/usr/share/doc", "/var/lib", "/etc/ssl", "/proc", "/sys/kernel"):
-        assert _deny_reason(Path(bad)) is not None
+        assert deny_reason(Path(bad)) is not None
 
 
 def test_deny_reason_allows_mount_subtrees() -> None:
@@ -73,7 +92,7 @@ def test_deny_reason_allows_mount_subtrees() -> None:
         "/mnt/data/books",
         str(Path.home() / "Books"),  # умолчание из настроек
     ):
-        assert _deny_reason(Path(ok)) is None, ok
+        assert deny_reason(Path(ok)) is None, ok
 
 
 @pytest.mark.parametrize(
@@ -125,3 +144,19 @@ def test_preview_truncates_by_budget(library: Path) -> None:
     preview = preview_root(library, budget=1)
 
     assert preview == {"files": 1, "books": 1, "audio": 0, "truncated": True}
+
+
+def test_budget_counts_non_book_files_too(library: Path) -> None:
+    """F4: бюджет ограничивает ВСЕ просмотренные записи, а не только книжные.
+
+    Раньше files инкрементировался лишь на совпавших расширениях, а сравнивался
+    с budget — каталог с миллионом не-книжных файлов (.nfo, .jpg) обходился
+    целиком. Мутация: вернуть сравнение с files — здесь truncated никогда бы
+    не выставился.
+    """
+    for name in range(100):
+        make_book(library, f"junk{name:03d}.nfo", b"note")
+    # Первый реально просмотренный файл — мусорный a000.nfo (сортировка).
+    preview = preview_root(library, budget=1)
+
+    assert preview == {"files": 0, "books": 0, "audio": 0, "truncated": True}

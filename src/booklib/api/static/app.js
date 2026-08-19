@@ -13,8 +13,10 @@ const el = {
   settingsBtn: document.getElementById("settingsBtn"),
   settings: document.getElementById("settings"),
   sCurrent: document.getElementById("s-current"),
+  sForm: document.getElementById("s-form"),
   sRoot: document.getElementById("s-root"),
   sCheck: document.getElementById("s-check"),
+  sCancel: document.getElementById("s-cancel"),
   sPreview: document.getElementById("s-preview"),
   sInfo: document.getElementById("s-info"),
   sApply: document.getElementById("s-apply"),
@@ -51,6 +53,14 @@ async function api(path, options = {}) {
     throw new Error(detail);
   }
   return response.json();
+}
+
+function postJson(path, payload) {
+  return api(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }
 
 function plural(n, one, few, many) {
@@ -176,11 +186,7 @@ function editBook(book) {
             author: el.eAuthor.value,
             section: el.eSection.value,
           };
-      const result = await api("/api/book", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      const result = await postJson("/api/book", payload);
       toast(result.action === "reset" ? "Правки сброшены" : "Сохранено");
       await Promise.all([loadSections(), loadBooks()]);
     } catch (error) {
@@ -226,56 +232,62 @@ async function checkRoot() {
   }
 }
 
-function openSettings() {
+const SOURCE_NAMES = {
+  config: "рантайм-конфиг", env: "окружение",
+  "env-file": "файл .env", default: "по умолчанию",
+};
+
+async function openSettings() {
   el.sApply.disabled = true;
   el.sRoot.disabled = true;
+  el.sCurrent.textContent = "";
+  el.sInfo.textContent = "";
   setPreview("");
-  el.settings.returnValue = "cancel";
   el.settings.showModal();
 
-  (async () => {
-    try {
-      const data = await api("/api/settings");
-      const sourceNames = { config: "рантайм-конфиг", env: "окружение", default: "по умолчанию" };
-      el.sCurrent.textContent = `сейчас: ${data.root} (${sourceNames[data.root_source] || data.root_source})`;
-      el.sRoot.value = data.root;
-      el.sRoot.disabled = false;
-      const tools = Object.entries(data.read_only.tools);
-      const missing = tools.filter(([, ok]) => !ok).map(([name]) => name);
-      el.sInfo.textContent = missing.length
-        ? `не найдены: ${missing.join(", ")} — обложки могут не генерироваться`
-        : `обложки: ${data.read_only.cover_width}×${data.read_only.cover_max_height}, `
-          + `требуемые утилиты на месте`;
-    } catch (error) {
-      el.sCurrent.textContent = "";
-      setPreview(`Не удалось загрузить настройки: ${error.message}`, "error");
-    }
-  })();
+  try {
+    const data = await api("/api/settings");
+    el.sCurrent.textContent =
+      `сейчас: ${data.root} (${SOURCE_NAMES[data.root_source] || data.root_source})`;
+    el.sRoot.value = data.root;
+    el.sRoot.disabled = false;
+    const missing = Object.entries(data.read_only.tools)
+      .filter(([, ok]) => !ok).map(([name]) => name);
+    el.sInfo.textContent = missing.length
+      ? `не найдены: ${missing.join(", ")} — обложки могут не генерироваться`
+      : `обложки: ${data.read_only.cover_width}×${data.read_only.cover_max_height}, `
+        + `требуемые утилиты на месте`;
+  } catch (error) {
+    // Поле снова доступно: настройки не загрузились, но путь ввести и проверить
+    // всё ещё можно — иначе диалог остаётся мёртвым до закрытия и открытия.
+    el.sRoot.disabled = false;
+    setPreview(`Не удалось загрузить настройки: ${error.message}`, "error");
+  }
+}
 
-  el.settings.onclose = async () => {
-    if (el.settings.returnValue !== "apply") return;
-    try {
-      const result = await api("/api/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ root: el.sRoot.value.trim() }),
-      });
-      toast(`Корень сменён: добавлено ${result.added}, обложек ${result.covers_built}`
-        + ` (${result.elapsed} с)`);
-      await Promise.all([loadStatus(), loadSections(), loadBooks()]);
-    } catch (error) {
-      toast(`Не применилось: ${error.message}`, true);
-    }
-  };
+async function applySettings() {
+  el.sApply.disabled = true;
+  el.sCheck.disabled = true;
+  setPreview("Применяю…");
+  try {
+    const result = await postJson("/api/settings", { root: el.sRoot.value.trim() });
+    el.settings.close();
+    toast(`Корень сменён: добавлено ${result.added}, обложек ${result.covers_built}`
+      + ` (${result.elapsed} с)`);
+    await Promise.all([loadStatus(), loadSections(), loadBooks()]);
+  } catch (error) {
+    // Диалог остаётся открытым: путь уже введён, и ошибку надо показать рядом с
+    // полем, а не тостом поверх витрины, которая ничего не меняла. «Применить»
+    // остаётся заблокированной до повторной проверки.
+    setPreview(error.message, "error");
+  } finally {
+    el.sCheck.disabled = false;
+  }
 }
 
 async function openBook(book) {
   try {
-    const result = await api("/api/open", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: book.key }),
-    });
+    const result = await postJson("/api/open", { key: book.key });
     toast(`Открыто: ${result.opened || book.title}`);
   } catch (error) {
     toast(`Не удалось открыть папку: ${error.message}`, true);
@@ -309,12 +321,19 @@ el.sort.addEventListener("change", () => {
 });
 
 el.settingsBtn.addEventListener("click", openSettings);
-el.sCheck.addEventListener("click", checkRoot);
-el.sRoot.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
-    event.preventDefault();
-    checkRoot();
-  }
+// Единственный путь к проверке: и клик по «Проверить», и Enter в поле пути —
+// это submit формы. preventDefault оставляет диалог открытым.
+el.sForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  checkRoot();
+});
+el.sCancel.addEventListener("click", () => el.settings.close());
+el.sApply.addEventListener("click", applySettings);
+// Путь изменили после проверки — предпросмотр больше не про него, и применять
+// непроверенное значение нельзя.
+el.sRoot.addEventListener("input", () => {
+  el.sApply.disabled = true;
+  setPreview("");
 });
 
 el.rescan.addEventListener("click", async () => {

@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from booklib.config.settings import get_settings
+from booklib.config import settings as settings_module
+from booklib.config.settings import PACKAGE_CONFIG_DIR, get_settings
 from booklib.taxonomy import classify_new, load_rules
 
 DATASHEET = "stm32-reference-manual.pdf"
@@ -27,7 +28,7 @@ def test_package_default_when_config_dir_missing(
 ) -> None:
     """Установка колесом: config_dir не существует, правила — пакетный дефолт.
 
-    Мутация: убрать фолбэк на package_rules_path — этот тест падает
+    Мутация: убрать фолбэк на PACKAGE_CONFIG_DIR в resolve_config_file — тест падает
     (правил нет, даташит классифицируется в «Новое»).
     """
     missing = tmp_path / "no-such-config"
@@ -57,5 +58,47 @@ def test_user_rules_override_package(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 def test_package_rules_file_exists() -> None:
     """Файл лежит внутри пакета — только так он попадёт в wheel."""
-    path = get_settings().package_rules_path
+    path = PACKAGE_CONFIG_DIR / "rules.json"
     assert path.exists(), f"пакетный файл правил не найден: {path}"
+
+
+def test_resolve_config_file_reports_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Один резолвер на все конфиги: три исхода различимы по метке источника."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "taxonomy.json").write_text('{"sections": [], "books": {}}', encoding="utf-8")
+    _point_config_dir_at(monkeypatch, config_dir)
+    settings = get_settings()
+
+    assert settings.resolve_config_file("taxonomy.json") == (
+        config_dir / "taxonomy.json",
+        "пользовательский",
+    )
+    assert settings.resolve_config_file("rules.json") == (
+        PACKAGE_CONFIG_DIR / "rules.json",
+        "пакетный дефолт",
+    )
+    # Нет нигде — путь указывает туда, куда файл надо положить, а не в пакет:
+    # иначе строка doctor не подсказывает действие.
+    assert settings.resolve_config_file("нет-такого.json") == (
+        config_dir / "нет-такого.json",
+        "нет файла",
+    )
+
+
+def test_config_dir_default_falls_back_outside_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """При установке колесом REPO_DIR указывает в site-packages — берём ~/.config/booklib.
+
+    Мутация: вернуть безусловный REPO_DIR / "config" — на wheel-установке
+    config_dir указывал бы внутрь пакета, и taxonomy.json было бы некуда положить.
+    """
+    monkeypatch.setattr(settings_module, "REPO_DIR", tmp_path / "no-checkout")
+    assert settings_module._default_config_dir() == settings_module.CONFIG_FALLBACK_DIR
+
+    (tmp_path / "checkout" / "config").mkdir(parents=True)
+    monkeypatch.setattr(settings_module, "REPO_DIR", tmp_path / "checkout")
+    assert settings_module._default_config_dir() == tmp_path / "checkout" / "config"

@@ -31,19 +31,21 @@
 ## Как устроено
 
 ```
-src/booklib/config/settings.py  настройки: config.json → env BOOKLIB_* → .env → умолчания
+src/booklib/config/settings.py  настройки: init → config.json → env BOOKLIB_* → .env → умолчания
 src/booklib/rootcheck.py        валидация и предпросмотр нового корня
 src/booklib/tools.py            REQUIRED_TOOLS (общий для cli и api)
 src/booklib/errors.py           LibraryUnavailable — общее исключение обхода и записи
 src/booklib/paths.py            library_root / relative_to_root
-src/booklib/db.py               соединение с СУБД: схема, миграции, WAL-ретрай
+src/booklib/db.py               connect()/connect_at(): схема, миграции, WAL-ретрай;
+                                init_state() — одноразовая подготовка слота на старте
+src/booklib/service.py          rescan() и apply_root(): замок скана, общий для api и cli
 src/booklib/grouping.py         обход дерева → карточки (BookGroup) → сводка обхода
 src/booklib/scanner.py          инкрементальный диф карточек → СУБД
 src/booklib/meta.py             нормализация имени файла, название/автор/год
 src/booklib/covers.py           превью: pdftocairo / ddjvu+Pillow / zip(epub) / base64(fb2)
 src/booklib/taxonomy.py         разделы: overrides → taxonomy.json → rules.json → «Новое»
 src/booklib/opener.py           DBus FileManager1.ShowItems, запасной xdg-open
-src/booklib/api/app.py          FastAPI + статика в api/static
+src/booklib/api/app.py          FastAPI + статика в api/static (роуты без orchestration)
 src/booklib/cli/app.py          Typer CLI, точка входа `booklib`
 scripts/build_taxonomy.py       разовая раскладка → config/taxonomy.json (НЕ в git, см. scripts/README.md)
 src/booklib/config/rules.json   правила для новых книг (пакетный дефолт, в git)
@@ -71,18 +73,30 @@ tests/{unit,integration}        инварианты из раздела выш�
 и один файл обложки (`cover_path` = `sha1(key)` без корня), поэтому смешивать корни
 в одной СУБД нельзя. Слот даёт и обратную совместимость: возврат на прежний корень
 не теряет `overrides`. Корень меняется из UI и живёт в `cache_dir/config.json`,
-который перекрывает env — иначе раздел настроек врал бы.
+который перекрывает env — иначе раздел настроек врал бы. Порядок источников:
+`init (Settings(...)) → config.json → env → .env → умолчание`; `field_source()`
+различает `env` и `env-file`.
+
+**Подготовка состояния — только на старте процесса** (`db.init_state()` из
+Typer-callback и lifespan FastAPI): миграция legacy-состояния и `root.txt`.
+В `connect()` этого нет намеренно — см. грабли.
+
+**Orchestration живёт в `service.py`**, не в роутах: `rescan()` и
+`apply_root(root, scan_on_start)` держат один `_RESCAN_LOCK`, поэтому CLI и HTTP
+не расходятся. `cli` не импортирует `api.app` ради скана.
 
 ## Грабли, уже собранные (не наступать повторно)
 
 - **`pdftoppm` в poppler 26.07 не пишет jpeg в stdout** — молча даёт 0 байт.
   Используем `pdftocairo -jpeg -singlefile`.
 - **`LOWER()` в SQLite умеет только ASCII.** Кириллический поиск без учёта регистра
-  требует зарегистрированной питоновской функции `pylower` (см. `api/app.py`, `db()`).
+  требует зарегистрированной питоновской функции `pylower` (см. `db.connect_at()`).
 - **`COLLATE NOCASE` в SQLite — ASCII-only, ровно как `LOWER()`.** Сортировка
   «по названию» кидала все кириллические названия со строчной буквы в хвост
   списка (`'Я' = 'я' COLLATE NOCASE` → 0). Лечится `create_collation("unicode_ci", …)`
-  рядом с `pylower`, а не сменой СУБД.
+  рядом с `pylower`, а не сменой СУБД. Регистрация — в `connect_at()`, единственной
+  фабрике соединений: пока она жила в обёртке `api.app.db()`, SQL с `unicode_ci`
+  был корректен только на api-соединениях, а из CLI падал `no such collation`.
 - **Правила `rules.json` матчатся ТОЛЬКО по имени файла**, папка игнорируется
   намеренно: слово `embedded` в имени `programming-embedded/` утаскивало все 136
   файлов этой папки в один раздел. Физической раскладке доверять нельзя — там же
@@ -107,6 +121,31 @@ tests/{unit,integration}        инварианты из раздела выш�
 - **`DecompressionBombError` (Pillow) и `LargeZipFile` наследуют `Exception`
   напрямую**, а не `OSError`/`ValueError`. Генерация обложек ловит широко
   намеренно: одна битая книга не должна ронять рескан каталога.
+- **Миграцию legacy-состояния нельзя звать из `connect()`.** Она берёт слот из
+  текущих настроек, а `connect()` вызывается уже ПОСЛЕ записи нового корня:
+  `booklib config --root /new` сразу после обновления увёз бы `overrides` старого
+  корня в слот нового (guard молчит — карточки просто становятся `missing`).
+  Место вызова одно — `init_state()` на старте процесса, пока активен корень
+  «до переключения».
+- **Мутационная проверка требует инвалидации байткода.** Если мутация не меняет
+  размер файла (перестановка строк) и восстановление идёт `mv`/`cp` из бэкапа,
+  Python считает `.pyc` валидным по `(mtime, size)` и продолжает исполнять
+  мутированный код — «исправление не работает» оказывается ложью. Прогонять
+  с `PYTHONDONTWRITEBYTECODE=1` и делать `touch` после восстановления.
+- **`<form method="dialog">` превращает Enter в закрытие диалога** (implicit
+  submission), причём с `returnValue` первой submit-кнопки — то есть «Отмена».
+  В настройках это лечится не keydown-хаком, а отказом от `method="dialog"`:
+  submit формы = «Проверить», кнопки действий — обычные `button` с обработчиками.
+- **pydantic не разворачивает `~` в `Path`-полях из env/.env** — значение
+  присваивается дословно, и `BOOKLIB_CACHE_DIR=~/cache` давал каталог с именем
+  «~», пока `_config_cache_dir()` (поиск `config.json`) тильду разворачивал:
+  запись из UI уходила в один файл, чтение — из другого, выбранный корень «не
+  липнул». Лечится `field_validator(mode="before")` на `root`/`cache_dir`/
+  `config_dir`, а не `expanduser()` в местах использования.
+- **Перенос legacy-состояния идемпотентен по КАЖДОМУ источнику**, а не по факту
+  «СУБД уже в слоте»: оборвавшийся на середине перенос (db переехал, covers —
+  нет) при раннем выходе по `db_path.exists()` оставлял `covers/` в `cache_dir`
+  навсегда и молча. Существующий файл в слоте при этом не затирается.
 - **Рантайм-конфиг не валидируется при чтении** — `config.json` читается без
   `validate_root` (иначе повреждённый файл уронил бы старт сервиса). Он может
   содержать путь, который UI/CLI отвергли бы; валидатор — единственный источник
@@ -126,6 +165,8 @@ uv run booklib sections                   # применить разделы
 uv run booklib classify "путь/файл.pdf"   # куда попадёт новая книга
 uv run booklib open --dry-run "<ключ>"    # проверить путь, не открывая nemo
 uv run booklib doctor                     # утилиты, библиотека, каталог
+uv run booklib config                     # активные настройки и источник каждой
+uv run booklib config --root <path>       # сменить корень (валидация + рескан)
 ```
 
 Всё живёт в одном окружении `uv` (`uv sync --dev`). Системный `python3` больше
@@ -137,7 +178,8 @@ uv run booklib doctor                     # утилиты, библиотека
   (`google-chrome-stable --headless --screenshot`) или контактный лист обложек.
   Счётчики API не показывают, что превью — нечитаемый обрезок.
 - Для guard'ов делать мутационную проверку: вырезать guard из исходника, прогнать
-  на копии СУБД и убедиться, что ущерб реально наступает. Первая попытка легко
+  на копии СУБД и убедиться, что ущерб реально наступает. Прогон — с
+  `PYTHONDONTWRITEBYTECODE=1`, восстановление — с `touch` (см. грабли про `.pyc`). Первая попытка легко
   оказывается пустой — например traversal-путь может просто не существовать, и
   код упадёт по другой причине, ничего не доказав.
 - После правки раскладки прогонять `build_taxonomy.py --check` (локальный скрипт) —

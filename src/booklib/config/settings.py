@@ -17,33 +17,57 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from pydantic import Field, field_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
     BaseSettings,
+    DotEnvSettingsSource,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
+    SettingsError,
 )
 
 PACKAGE_DIR = Path(__file__).resolve().parent.parent
 REPO_DIR = PACKAGE_DIR.parent.parent
 
+# Дефолты конфигурации, попадающие в wheel: rules.json лежит здесь, а не в
+# config_dir, иначе установка колесом молча осталась бы без правил.
+PACKAGE_CONFIG_DIR = PACKAGE_DIR / "config"
+
+# Куда смотреть за конфигами, когда работаем не из чекаута репозитория.
+CONFIG_FALLBACK_DIR = Path.home() / ".config" / "booklib"
+
 RUNTIME_CONFIG_NAME = "config.json"
+
+# Дефолт cache_dir в одном месте: его знают и поле Settings.cache_dir, и поиск
+# рантайм-конфига (который не может спросить настройки — он их и формирует).
+DEFAULT_CACHE_DIR = Path.home() / ".cache" / "booklib"
 
 # Поля, которые можно менять из UI. cache_dir из файла принципиально не читается:
 # файл лежит внутри cache_dir, чтение привело бы к циклу.
 RUNTIME_CONFIG_FIELDS = ("root", "scan_on_start")
 
 
-def runtime_config_data() -> dict[str, Any]:
-    """Актуальные whitelist-поля из cache_dir/config.json.
+def _default_config_dir() -> Path:
+    """config_dir: каталог чекаута, если запущены из репозитория, иначе ~/.config/booklib.
 
-    Путь выводится из BOOKLIB_CACHE_DIR (или умолчания) напрямую, а не из
-    settings.cache_dir — иначе функция зависела бы от самого файла. Битый JSON —
-    пустой словарь: приложение не должно отваливаться из-за ручной правки файла.
+    REPO_DIR выводится из расположения пакета, поэтому при установке колесом он
+    указывает внутрь site-packages — каталога, которого нет и в котором
+    пользователю нечего править.
     """
-    env = os.environ.get("BOOKLIB_CACHE_DIR")
-    cache_dir = Path(env) if env else Path.home() / ".cache" / "booklib"
-    path = cache_dir / RUNTIME_CONFIG_NAME
+    repo_config = REPO_DIR / "config"
+    if repo_config.is_dir():
+        return repo_config
+    return CONFIG_FALLBACK_DIR
+
+
+def _read_runtime_config(path: Path) -> dict[str, Any]:
+    """whitelist-поля из JSON-файла. Битый файл — пустой словарь.
+
+    Приложение не должно отваливаться из-за ручной правки конфига, поэтому
+    читаем терпимо; whitelist — чтобы случайное поле не превратилось в
+    настройку. Общий helper для чтения и для read-modify-write.
+    """
     if not path.exists():
         return {}
     try:
@@ -55,36 +79,54 @@ def runtime_config_data() -> dict[str, Any]:
     return {k: v for k, v in loaded.items() if k in RUNTIME_CONFIG_FIELDS}
 
 
-def _dotenv_value(name: str) -> str | None:
-    """Значение переменной из .env в текущем каталоге — как читает pydantic-settings."""
-    env_file = Path(".env")
-    if not env_file.exists():
-        return None
+def _dotenv_data() -> dict[str, Any]:
+    """Поля из .env глазами самого pydantic-settings.
+
+    Свой парсер .env был бы четвёртой реализацией одного и того же (и врал бы
+    на кавычках, export, multiline). Источник читает env_file из model_config,
+    так что справка о источниках не расходится с тем, что реально применилось.
+    """
     try:
-        lines = env_file.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return None
-    for raw in lines:
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        if key.strip() == name:
-            return value.strip().strip('"').strip("'")
-    return None
+        return dict(DotEnvSettingsSource(Settings)())
+    except (OSError, SettingsError, UnicodeDecodeError):
+        # Битый .env не должен ронять справку об источниках: Settings() на таком
+        # файле упадёт всё равно, но field_source зовётся ещё и из doctor.
+        return {}
+
+
+def _config_cache_dir() -> Path:
+    """cache_dir для поиска рантайм-конфига: env → .env → умолчание.
+
+    Из settings.cache_dir его брать нельзя: файл лежит внутри cache_dir, и
+    настройки как раз строятся из него — вышел бы цикл.
+    """
+    env = os.environ.get("BOOKLIB_CACHE_DIR")
+    if env:
+        return Path(env).expanduser()
+    from_dotenv = _dotenv_data().get("cache_dir")
+    if from_dotenv:
+        return Path(str(from_dotenv)).expanduser()
+    return DEFAULT_CACHE_DIR
+
+
+def runtime_config_data() -> dict[str, Any]:
+    """Актуальные whitelist-поля из cache_dir/config.json."""
+    return _read_runtime_config(_config_cache_dir() / RUNTIME_CONFIG_NAME)
 
 
 def field_source(field: str) -> str:
-    """Откуда берётся значение поля: config → env → env-file (.env) → default.
+    """Откуда взято значение поля: config → env → env-file (.env) → default.
 
     Нужен для справки в UI/CLI: «почему сканируется не та папка» нельзя
-    диагностировать, не зная, какой источник победил.
+    диагностировать, не зная, какой источник победил. Метки соответствуют
+    порядку источников в settings_customise_sources.
     """
     if field in runtime_config_data():
         return "config"
-    env_name = f"BOOKLIB_{field.upper()}"
-    if env_name in os.environ or _dotenv_value(env_name) is not None:
+    if f"BOOKLIB_{field.upper()}" in os.environ:
         return "env"
+    if field in _dotenv_data():
+        return "env-file"
     return "default"
 
 
@@ -115,8 +157,8 @@ class Settings(BaseSettings):
 
     # Библиотека и состояние
     root: Path = Path.home() / "Books"
-    cache_dir: Path = Path.home() / ".cache" / "booklib"
-    config_dir: Path = REPO_DIR / "config"
+    cache_dir: Path = DEFAULT_CACHE_DIR
+    config_dir: Path = Field(default_factory=_default_config_dir)
 
     # HTTP. Менять host на 0.0.0.0 нельзя: /api/open запускает процессы в сессии.
     host: str = "127.0.0.1"
@@ -129,6 +171,22 @@ class Settings(BaseSettings):
     cover_quality: int = 82
     cover_workers: int = 4
     render_timeout_s: int = 60
+
+    @field_validator("root", "cache_dir", "config_dir", mode="before")
+    @classmethod
+    def _expand_user(cls, value: Any) -> Any:
+        """Развернуть ~ в путях из env/.env/config.json.
+
+        pydantic присваивает Path-полю значение из окружения дословно, поэтому
+        BOOKLIB_CACHE_DIR=~/cache давал каталог с именем «~», а _config_cache_dir()
+        (он ищет config.json) тильду разворачивал: запись из UI уходила в один
+        файл, чтение — из другого, и выбранный корень «не липнул». То же с
+        BOOKLIB_ROOT=~/Books — библиотека числилась несмонтированной.
+        На абсолютном пути expanduser() — no-op.
+        """
+        if isinstance(value, str | Path):
+            return Path(value).expanduser()
+        return value
 
     @property
     def slot_dir(self) -> Path:
@@ -154,31 +212,29 @@ class Settings(BaseSettings):
     def runtime_config_path(self) -> Path:
         return self.cache_dir / RUNTIME_CONFIG_NAME
 
+    def resolve_config_file(self, name: str) -> tuple[Path, str]:
+        """(путь, источник) для файла конфигурации: оверрайд → пакетный дефолт.
+
+        Один резолвер на все конфиги: у rules.json фолбэк на пакетный дефолт был,
+        у taxonomy.json — нет, и разница ничем не объяснялась. Когда файла нет
+        нигде, возвращаем путь в config_dir: именно туда его и надо положить,
+        так что сообщение doctor остаётся действием, а не загадкой.
+        """
+        user = self.config_dir / name
+        if user.exists():
+            return user, "пользовательский"
+        packaged = PACKAGE_CONFIG_DIR / name
+        if packaged.exists():
+            return packaged, "пакетный дефолт"
+        return user, "нет файла"
+
     @property
     def taxonomy_path(self) -> Path:
-        return self.config_dir / "taxonomy.json"
-
-    @property
-    def user_rules_path(self) -> Path:
-        """Пользовательский оверрайд правил (config_dir/rules.json), если есть."""
-        return self.config_dir / "rules.json"
-
-    @property
-    def package_rules_path(self) -> Path:
-        """Пакетный дефолт правил: попадает в wheel, работает без config_dir."""
-        return PACKAGE_DIR / "config" / "rules.json"
+        return self.resolve_config_file("taxonomy.json")[0]
 
     @property
     def rules_path(self) -> Path:
-        """Актуальный файл правил: пользовательский оверрайд, иначе пакетный.
-
-        Репозиторий конфигов не уезжает в колесо, поэтому голый
-        config_dir/rules.json (как у taxonomy) означал бы «Новое» для всей
-        библиотеки при установке из wheel — тихий отказ без правил.
-        """
-        if self.user_rules_path.exists():
-            return self.user_rules_path
-        return self.package_rules_path
+        return self.resolve_config_file("rules.json")[0]
 
     @property
     def static_dir(self) -> Path:
@@ -193,37 +249,42 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        # Первый источник — наивысший приоритет: UI должен побеждать env,
-        # иначе выбранный в витрине корень «не работает».
+        # Первый источник — наивысший приоритет. init_settings (программная
+        # передача: Settings(root=...)) побеждает рантайм-конфиг из UI, потому
+        # что это явный код, а не окружение; рантайм-конфиг — над env, чтобы
+        # выбранный в витрине корень «работал», а не перебивался переменными.
         return (
-            _RuntimeConfigSource(settings_cls),
             init_settings,
+            _RuntimeConfigSource(settings_cls),
             env_settings,
             dotenv_settings,
             file_secret_settings,
         )
 
 
-def write_runtime_config(**fields: object) -> None:
+def write_runtime_config(root: str | None = None, scan_on_start: bool | None = None) -> None:
     """Атомарно записать рантайм-конфиг и сбросить кэш настроек.
 
-    Неизвестные поля — ошибка: whitelist держится строгим, чтобы случайная
-    опечатка не превратилась в молча проигнорированную настройку.
-    """
-    unknown = set(fields) - set(RUNTIME_CONFIG_FIELDS)
-    if unknown:
-        raise ValueError(f"неизвестные поля рантайм-конфига: {sorted(unknown)}")
+    Параметры перечислены явно, а не **fields с рантайм-проверкой whitelist:
+    опечатку в имени поля так ловит mypy на вызывающей стороне, а не ValueError
+    в продакшне. None — «поле не меняем», поэтому scan_on_start=False пишется
+    корректно. Записываются все переданные поля разом: полуприменённого
+    конфига (корень новый, а флаг ещё старый) не бывает.
 
-    settings = get_settings()
-    path = settings.runtime_config_path
-    current: dict[str, Any] = {}
-    if path.exists():
-        try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            loaded = {}
-        if isinstance(loaded, dict):
-            current = {k: v for k, v in loaded.items() if k in RUNTIME_CONFIG_FIELDS}
+    Атомарность — «читатель видит старое или новое, никогда частичное»
+    (mkstemp + os.replace). fsync намеренно нет: файл хранит выбор пользователя,
+    и потеря последней записи при отключении питания допустима.
+    """
+    fields = {
+        name: value
+        for name, value in (("root", root), ("scan_on_start", scan_on_start))
+        if value is not None
+    }
+    if not fields:
+        return
+
+    path = get_settings().runtime_config_path
+    current = _read_runtime_config(path)
     current.update(fields)
     current = {k: (str(v) if isinstance(v, Path) else v) for k, v in current.items()}
 
