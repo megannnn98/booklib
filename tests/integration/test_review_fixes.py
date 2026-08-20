@@ -14,11 +14,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from booklib import covers
-from booklib.api.app import app, rescan
-from booklib.db import connect
+from booklib.api.app import app
+from booklib.db import connect_at
 from booklib.grouping import collect_groups
 from booklib.opener import OutsideLibrary, _file_uri, resolve_target
 from booklib.scanner import sync
+from booklib.service import rescan
 from booklib.taxonomy import apply as apply_sections
 from tests.conftest import make_book
 
@@ -201,7 +202,7 @@ def test_connect_is_idempotent_across_threads(tmp_path: Path) -> None:
     def open_and_describe(_: int) -> set[str]:
         # соединение sqlite нельзя использовать вне своего потока, поэтому
         # открываем и проверяем схему прямо здесь
-        conn = connect(db_path)
+        conn = connect_at(db_path)
         try:
             return {row["name"] for row in conn.execute("PRAGMA table_info(books)")}
         finally:

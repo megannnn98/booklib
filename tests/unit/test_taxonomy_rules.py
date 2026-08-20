@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from booklib.config.settings import get_settings
+from booklib.config.settings import PACKAGE_CONFIG_DIR, get_settings
 from booklib.grouping import Kind
 from booklib.taxonomy import classify_new, load_rules, match_text
 
@@ -20,7 +20,7 @@ def real_rules(tmp_path: Path) -> None:
     """Тестируем боевой rules.json, а не выдуманный."""
     config_dir = tmp_path / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy(get_settings().package_rules_path, config_dir / "rules.json")
+    shutil.copy(PACKAGE_CONFIG_DIR / "rules.json", config_dir / "rules.json")
 
 
 def test_rules_file_is_valid_json_with_sections() -> None:
@@ -77,7 +77,7 @@ def test_taxonomy_covers_every_section_in_rules() -> None:
     """
     taxonomy = json.loads((REPO_CONFIG / "taxonomy.example.json").read_text(encoding="utf-8"))
     known = set(taxonomy["sections"])
-    rules = json.loads(get_settings().package_rules_path.read_text(encoding="utf-8"))
+    rules = json.loads((PACKAGE_CONFIG_DIR / "rules.json").read_text(encoding="utf-8"))
     used = {item["section"] for item in rules["rules"]} | {rules["default"]}
     assert used <= known, f"разделы только в правилах: {used - known}"
 

@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 
 import pytest
 
-from booklib.config.settings import field_source, get_settings, write_runtime_config
+from booklib.config import settings as settings_module
+from booklib.config.settings import (
+    RUNTIME_CONFIG_FIELDS,
+    Settings,
+    field_source,
+    get_settings,
+    write_runtime_config,
+)
 
 
 def _write_config(cache: Path, **fields: object) -> Path:
@@ -28,6 +36,20 @@ def test_config_overrides_env(tmp_path: Path) -> None:
     assert field_source("root") == "config"
     # cache_dir продолжает браться из env, а не из файла
     assert settings.cache_dir == tmp_path / "cache"
+
+
+def test_programmatic_root_wins_over_runtime_config(tmp_path: Path) -> None:
+    """F5: Settings(root=...) — программная передача, а не env, и должна побеждать.
+
+    Раньше _RuntimeConfigSource стоял выше init_settings, и явный Settings(root=...)
+    молча игнорировался, если существовал config.json. Мутация: убрать init_settings
+    из списка источников (или поставить его ниже конфига) — это построение
+    вернуло бы корень из файла, и тест упал бы.
+    """
+    _write_config(tmp_path / "cache", root=str(tmp_path / "from-config"))
+    forced = Settings(root=tmp_path / "forced")
+
+    assert str(forced.root) == str(tmp_path / "forced")
 
 
 def test_cache_dir_from_file_is_ignored(tmp_path: Path) -> None:
@@ -71,10 +93,15 @@ def test_write_runtime_config_roundtrip(tmp_path: Path) -> None:
     assert field_source("root") == "config"
 
 
-def test_write_unknown_field_raises(tmp_path: Path) -> None:
-    get_settings.cache_clear()
-    with pytest.raises(ValueError):
-        write_runtime_config(port=9999)
+def test_writer_parameters_match_whitelist() -> None:
+    """Сигнатура write_runtime_config = whitelist рантайм-конфига.
+
+    Раньше whitelist проверялся в рантайме (**fields + ValueError). Теперь поля
+    перечислены явно, и опечатку ловит mypy; этот тест держит два списка от
+    расхождения — иначе новое поле писалось бы, но не читалось.
+    """
+    params = set(inspect.signature(write_runtime_config).parameters)
+    assert params == set(RUNTIME_CONFIG_FIELDS)
 
 
 def test_broken_config_file_falls_back_to_env(tmp_path: Path) -> None:
@@ -96,9 +123,47 @@ def test_env_source_is_reported(tmp_path: Path) -> None:
 def test_default_source_when_not_configured(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # chdir в tmp_path: .env читается относительно cwd, и локальный .env
+    # разработчика не должен превращать "default" в "env-file".
+    monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("BOOKLIB_ROOT")
     get_settings.cache_clear()
     assert field_source("root") == "default"
+
+
+def test_env_file_source_is_reported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """.env — отдельный источник, а не «env»: иначе справка врёт, где искать значение."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("BOOKLIB_ROOT")
+    (tmp_path / ".env").write_text(f"BOOKLIB_ROOT={tmp_path / 'from-dotenv'}\n", encoding="utf-8")
+
+    get_settings.cache_clear()
+
+    assert str(get_settings().root) == str(tmp_path / "from-dotenv")
+    assert field_source("root") == "env-file"
+
+
+def test_runtime_config_found_via_dotenv_cache_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """cache_dir из .env — рантайм-конфиг ищется там же, где его пишут.
+
+    Раньше поиск config.json знал только BOOKLIB_CACHE_DIR и умолчание, поэтому
+    при cache_dir из .env настройки читали конфиг не оттуда, куда указывал
+    settings.cache_dir: запись из UI попадала в один файл, чтение — в другой.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("BOOKLIB_CACHE_DIR")
+    cache = tmp_path / "dotenv-cache"
+    (tmp_path / ".env").write_text(f"BOOKLIB_CACHE_DIR={cache}\n", encoding="utf-8")
+    _write_config(cache, root=str(tmp_path / "from-config"))
+
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    assert settings.cache_dir == cache
+    assert str(settings.root) == str(tmp_path / "from-config")
+    assert field_source("root") == "config"
 
 
 def test_slot_dir_normalizes_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -117,3 +182,21 @@ def test_slot_dir_normalizes_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     slot_via_link = get_settings().slot_dir
 
     assert slot_with_slash == slot_via_link
+
+
+def test_paths_from_env_expand_tilde(monkeypatch: pytest.MonkeyPatch) -> None:
+    """~ в путях разворачивается в модели, иначе чтение и запись конфига разъедутся.
+
+    pydantic присваивает Path-полю значение из env дословно, а _config_cache_dir()
+    (поиск config.json) тильду разворачивал: запись из UI уходила в «~/cache»,
+    чтение — из «$HOME/cache». Мутация: убрать валидатор _expand_user — тест падает.
+    """
+    monkeypatch.setenv("BOOKLIB_CACHE_DIR", "~/tilde-cache")
+    monkeypatch.setenv("BOOKLIB_ROOT", "~/tilde-books")
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    assert settings.cache_dir == Path.home() / "tilde-cache"
+    assert settings.root == Path.home() / "tilde-books"
+    assert settings.cache_dir == settings_module._config_cache_dir()
+    assert settings.runtime_config_path == Path.home() / "tilde-cache" / "config.json"

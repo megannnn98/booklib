@@ -6,24 +6,36 @@ import json
 import shutil
 import sys
 import time
+from contextlib import closing
 
 import typer
 import uvicorn
 
 from booklib import covers, opener
 from booklib.api.app import app as fastapi_app
-from booklib.api.app import rescan
-from booklib.config.settings import field_source, get_settings, write_runtime_config
-from booklib.db import connect
+from booklib.config.settings import Settings, field_source, get_settings
+from booklib.db import connect, init_state
 from booklib.errors import LibraryUnavailable
 from booklib.grouping import collect_groups, stats_report
-from booklib.rootcheck import InvalidRoot, validate_root
+from booklib.rootcheck import InvalidRoot
 from booklib.scanner import sync
+from booklib.service import apply_root, rescan
 from booklib.taxonomy import apply as apply_sections
 from booklib.taxonomy import classify_new
 from booklib.tools import REQUIRED_TOOLS
 
 app = typer.Typer(help="Локальный веб-каталог библиотеки", no_args_is_help=True)
+
+
+@app.callback()
+def prepare_state() -> None:
+    """Старт любого CLI-вызова: одноразовая подготовка слота состояния.
+
+    Пока корень ещё «до переключения» (активный на момент запуска), переносим
+    legacy-состояние и пишем root.txt в слот. Дальше migrations/marker в connect()
+    не выполняются — см. db.init_state.
+    """
+    init_state()
 
 
 @app.command()
@@ -63,7 +75,7 @@ def scan(
     typer.echo("расширения:    " + ", ".join(f"{k}:{v}" for k, v in report["by_ext"].items()))
 
     if dry_run:
-        typer.echo("\n--dry-run: СУБД не тронута")
+        typer.echo("\n--dry-run: каталог не изменён")
         return
 
     conn = connect()
@@ -127,7 +139,6 @@ def classify_cmd(path: str) -> None:
 
 @app.command("config")
 def config_cmd(
-    show: bool = typer.Option(False, "--show", help="активные настройки и источник каждого"),
     root: str | None = typer.Option(None, "--root", help="сменить корень библиотеки"),
     reset: bool = typer.Option(
         False, "--reset", help="снять рантайм-конфиг (вернуться к env/умолчанию)"
@@ -135,7 +146,7 @@ def config_cmd(
 ) -> None:
     """Рантайм-конфиг: cache_dir/config.json поверх env.
 
-    Без флагов и с --show печатает активные настройки и их источники
+    Без флагов печатает активные настройки и их источники
     (config > env > .env > умолчание).
     """
     if reset:
@@ -146,34 +157,28 @@ def config_cmd(
         return
 
     if root:
+        # apply_root из service: валидация → запись конфига → рескан атомарно
+        # под замком (как в API). Раньше write_runtime_config звался до rescan(),
+        # вне замка, — ровно то, что в API-ветке чинили отдельным коммитом.
         try:
-            resolved = validate_root(root)
-        except InvalidRoot as exc:
+            stats = apply_root(root)
+        except (InvalidRoot, LibraryUnavailable) as exc:
             typer.secho(f"ОШИБКА: {exc}", fg="red", err=True)
             raise typer.Exit(2) from exc
-        write_runtime_config(root=str(resolved))
-        typer.echo(f"корень применён: {resolved}")
-        try:
-            stats = rescan()
-        except LibraryUnavailable as exc:
-            typer.secho(f"ОШИБКА: корень применён, но скан невозможен: {exc}", fg="red", err=True)
-            raise typer.Exit(2) from exc
+        typer.echo(f"корень применён: {get_settings().root}")
         typer.echo("  ".join(f"{k}={v}" for k, v in stats.items()))
         return
 
-    if not show:
-        show = True
     settings = get_settings()
-    if show:
-        typer.echo(f"root:          {settings.root}   (источник: {field_source('root')})")
-        typer.echo(
-            f"scan_on_start: {settings.scan_on_start}   (источник: {field_source('scan_on_start')})"
-        )
-        typer.echo(f"cache_dir:     {settings.cache_dir}")
-        typer.echo(f"слот:          {settings.slot_dir}")
-        typer.echo(f"СУБД:          {settings.db_path}")
-        typer.echo(f"обложки:       {settings.cover_dir}")
-        typer.echo(f"файл конфига:  {settings.runtime_config_path}")
+    typer.echo(f"root:          {settings.root}   (источник: {field_source('root')})")
+    typer.echo(
+        f"scan_on_start: {settings.scan_on_start}   (источник: {field_source('scan_on_start')})"
+    )
+    typer.echo(f"cache_dir:     {settings.cache_dir}")
+    typer.echo(f"слот:          {settings.slot_dir}")
+    typer.echo(f"СУБД:          {settings.db_path}")
+    typer.echo(f"обложки:       {settings.cover_dir}")
+    typer.echo(f"файл конфига:  {settings.runtime_config_path}")
 
 
 @app.command("open")
@@ -192,6 +197,36 @@ def open_cmd(
         raise typer.Exit(1) from exc
 
 
+def _check(ok: bool, line: str) -> int:
+    """Напечатать строку проверки и вернуть её вклад в счётчик проблем.
+
+    Пять копий `problems += 0 if ok else 1` рядом с пятью f-строками с галочкой
+    читались хуже, чем один helper: галочка и счётчик не могут разъехаться.
+    """
+    typer.echo(f"{'✓' if ok else '✗'} {line}")
+    return 0 if ok else 1
+
+
+def _catalog_line(settings: Settings, mounted: bool) -> tuple[bool, str]:
+    """Строка про каталог: 0 карточек при смонтированном корне — это проблема.
+
+    Иначе расхождение «конфиг указывает не на библиотеку» выглядело бы как
+    нормальное состояние (✓ и exit 0).
+    """
+    if not settings.db_path.exists():
+        return False, f"каталог      СУБД ещё нет: {settings.db_path}"
+    with closing(connect()) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n, SUM(missing) AS missing, SUM(has_cover) AS covers FROM books"
+        ).fetchone()
+    if row["n"] == 0 and mounted:
+        return False, "каталог      0 карточек — каталог пуст, проверьте корень (booklib config)"
+    return True, (
+        f"каталог      {row['n']} карточек, обложек {row['covers'] or 0}, "
+        f"пропало {row['missing'] or 0}"
+    )
+
+
 @app.command()
 def doctor() -> None:
     """Проверить окружение: утилиты, библиотеку, каталог."""
@@ -200,43 +235,18 @@ def doctor() -> None:
 
     for tool in REQUIRED_TOOLS:
         found = shutil.which(tool)
-        typer.echo(f"{'✓' if found else '✗'} {tool:<12} {found or 'НЕ НАЙДЕН'}")
-        problems += 0 if found else 1
+        problems += _check(bool(found), f"{tool:<12} {found or 'НЕ НАЙДЕН'}")
 
     mounted = settings.root.is_dir()
-    typer.echo(f"{'✓' if mounted else '✗'} библиотека   {settings.root}")
-    problems += 0 if mounted else 1
+    problems += _check(mounted, f"библиотека   {settings.root}")
     typer.echo(f"корень:      источник {field_source('root')}")
     typer.echo(f"слот:        {settings.slot_dir}")
 
-    if settings.db_path.exists():
-        conn = connect()
-        row = conn.execute(
-            "SELECT COUNT(*) AS n, SUM(missing) AS missing, SUM(has_cover) AS covers FROM books"
-        ).fetchone()
-        conn.close()
-        if row["n"] == 0 and mounted:
-            typer.echo(
-                "✗ каталог      0 карточек — каталог пуст, проверьте корень (booklib config --show)"
-            )
-            problems += 1
-        else:
-            typer.echo(
-                f"✓ каталог      {row['n']} карточек, обложек {row['covers'] or 0}, "
-                f"пропало {row['missing'] or 0}"
-            )
-    else:
-        typer.echo(f"✗ каталог      СУБД ещё нет: {settings.db_path}")
-        problems += 1
+    problems += _check(*_catalog_line(settings, mounted))
 
-    taxonomy = settings.taxonomy_path
-    typer.echo(f"{'✓' if taxonomy.exists() else '✗'} {taxonomy.name:<12} {taxonomy}")
-    problems += 0 if taxonomy.exists() else 1
-
-    rules = settings.rules_path
-    note = " (пакетный дефолт)" if rules == settings.package_rules_path else " (пользовательский)"
-    typer.echo(f"{'✓' if rules.exists() else '✗'} {rules.name:<12} {rules}{note}")
-    problems += 0 if rules.exists() else 1
+    for name in ("taxonomy.json", "rules.json"):
+        path, source = settings.resolve_config_file(name)
+        problems += _check(path.exists(), f"{name:<13} {path} ({source})")
 
     raise typer.Exit(1 if problems else 0)
 

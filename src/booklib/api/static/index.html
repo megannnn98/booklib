@@ -45,21 +45,24 @@
   </form>
 </dialog>
 
+<!-- Без method="dialog": submit формы (в том числе Enter в поле пути) — это
+     «Проверить», а не закрытие диалога. Кнопки действий — обычные button'ы
+     с явными обработчиками, поэтому returnValue тут не нужен. -->
 <dialog id="settings">
-  <form method="dialog">
+  <form id="s-form">
     <h2>Настройки</h2>
     <p id="s-current"></p>
     <label>Путь библиотеки
       <span id="s-row">
         <input id="s-root" autocomplete="off" spellcheck="false">
-        <button id="s-check" type="button">Проверить</button>
+        <button id="s-check">Проверить</button>
       </span>
     </label>
     <p id="s-preview" hidden></p>
     <p id="s-info"></p>
     <menu>
-      <button value="cancel">Отмена</button>
-      <button value="apply" class="primary" id="s-apply" disabled>Применить</button>
+      <button type="button" id="s-cancel">Отмена</button>
+      <button type="button" class="primary" id="s-apply" disabled>Применить</button>
     </menu>
   </form>
 </dialog>

@@ -42,7 +42,14 @@ def library(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def db(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    conn = connect(tmp_path / "cache" / "library.db")
+    """Соединение со слотом текущего корня (как его видит API).
+
+    до F1 тестовая фикстура держала СУБД по legacy-пути cache_dir/library.db,
+    а первый запрос TestClient мигрировал её в слот через connect() → db().
+    После выноса миграции в init_state() этого не происходит, поэтому фикстура
+    работает напрямую со слотом, чтобы API и тест читали одну и ту же СУБД.
+    """
+    conn = connect()
     yield conn
     conn.close()
 

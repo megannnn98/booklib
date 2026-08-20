@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import json
 import shutil
-import sqlite3
-import threading
 import time
+from contextlib import asynccontextmanager, closing
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
@@ -18,13 +17,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from booklib import covers, opener
-from booklib.config.settings import field_source, get_settings, write_runtime_config
-from booklib.db import connect
+from booklib.config.settings import field_source, get_settings
+from booklib.db import connect, init_state
 from booklib.errors import LibraryUnavailable
-from booklib.grouping import collect_groups
 from booklib.rootcheck import InvalidRoot, preview_root, validate_root
-from booklib.scanner import sync
-from booklib.taxonomy import apply as apply_sections
+from booklib.service import apply_root, rescan
 from booklib.taxonomy import load_taxonomy
 from booklib.tools import REQUIRED_TOOLS
 
@@ -35,9 +32,27 @@ SORTS = {
     "size": "size DESC",
 }
 
-_RESCAN_LOCK = threading.Lock()
 
-app = FastAPI(title="booklib", docs_url=None, redoc_url=None)
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Старт процесса: одноразовая подготовка слота состояния (миграция legacy
+    + root.txt) с корнем «до переключения» — см. db.init_state."""
+    init_state()
+    yield
+
+
+app = FastAPI(title="booklib", docs_url=None, redoc_url=None, lifespan=lifespan)
+
+
+@app.exception_handler(LibraryUnavailable)
+def _unavailable(_request, exc: LibraryUnavailable) -> JSONResponse:
+    """Корень не смонтирован или пуст — каталог оставляем как есть (503)."""
+    return JSONResponse({"error": str(exc)}, status_code=503)
+
+
+@app.exception_handler(InvalidRoot)
+def _invalid_root(_request, exc: InvalidRoot) -> JSONResponse:
+    return JSONResponse({"detail": str(exc)}, status_code=400)
 
 
 class OpenRequest(BaseModel):
@@ -74,62 +89,19 @@ def require_own_page(x_booklib: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=403, detail="запрос не со страницы booklib")
 
 
-def db() -> sqlite3.Connection:
-    conn = connect()
-    # LOWER() в SQLite не умеет кириллицу — регистронезависимый поиск делаем питоном
-    conn.create_function("pylower", 1, lambda value: value.lower() if value else "")
-    # COLLATE NOCASE тоже ASCII-only: 'абрикос' со строчной уезжал в хвост списка.
-    # unicode_ci — питоновская коллация через casefold, регистрируется на соединении.
-    conn.create_collation(
-        "unicode_ci",
-        lambda a, b: (a.casefold() > b.casefold()) - (a.casefold() < b.casefold()),
-    )
-    return conn
-
-
 def library_mounted() -> bool:
     return get_settings().root.is_dir()
-
-
-def rescan() -> dict:
-    """Полный цикл обновления: скан → разделы → недостающие обложки.
-
-    Под замком: роуты синхронные и выполняются в пуле потоков uvicorn, поэтому
-    двойной клик по «Обновить» или вторая вкладка запускали два скана разом —
-    два писателя в СУБД и две генерации одной обложки.
-    """
-    with _RESCAN_LOCK:
-        return _rescan()
-
-
-def _rescan() -> dict:
-    started = time.time()
-    groups = collect_groups()
-    conn = connect()
-    try:
-        stats = sync(conn, groups)
-        apply_sections(conn)
-    finally:
-        conn.close()
-    cover_stats = covers.generate()
-    return {
-        **stats,
-        "covers_built": cover_stats["built"],
-        "covers_failed": cover_stats["failed"],
-        "elapsed": round(time.time() - started, 2),
-    }
 
 
 @app.get("/api/status")
 def api_status() -> dict:
     settings = get_settings()
     mounted = library_mounted()
-    conn = db()
-    row = conn.execute(
-        "SELECT COUNT(*) AS total, SUM(missing) AS missing, SUM(has_cover) AS covers FROM books"
-    ).fetchone()
-    last_scan = conn.execute("SELECT v FROM state WHERE k = 'last_scan'").fetchone()
-    conn.close()
+    with closing(connect()) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS total, SUM(missing) AS missing, SUM(has_cover) AS covers FROM books"
+        ).fetchone()
+        last_scan = conn.execute("SELECT v FROM state WHERE k = 'last_scan'").fetchone()
     return {
         "mounted": mounted,
         "root": str(settings.root),
@@ -144,13 +116,12 @@ def api_status() -> dict:
 @app.get("/api/sections")
 def api_sections() -> list[dict]:
     known, _ = load_taxonomy()
-    conn = db()
-    rows = conn.execute(
-        "SELECT COALESCE(o.section, b.section) AS section, COUNT(*) AS n FROM books b "
-        "LEFT JOIN overrides o ON o.key = b.key "
-        "WHERE b.missing = 0 GROUP BY 1"  # по алиасу: 'section' есть в обеих таблицах
-    ).fetchall()
-    conn.close()
+    with closing(connect()) as conn:
+        rows = conn.execute(
+            "SELECT COALESCE(o.section, b.section) AS section, COUNT(*) AS n FROM books b "
+            "LEFT JOIN overrides o ON o.key = b.key "
+            "WHERE b.missing = 0 GROUP BY 1"  # по алиасу: 'section' есть в обеих таблицах
+        ).fetchall()
 
     counts = {row["section"]: row["n"] for row in rows if row["section"]}
     ordered = [s for s in known if s in counts] + sorted(set(counts) - set(known))
@@ -191,14 +162,13 @@ def api_books(
         "FROM books b LEFT JOIN overrides o ON o.key = b.key "
         f"WHERE {' AND '.join(where)} ORDER BY {order} LIMIT ? OFFSET ?"
     )
-    conn = db()
-    rows = conn.execute(sql, (*params, limit, offset)).fetchall()
-    total = conn.execute(
-        "SELECT COUNT(*) AS n FROM books b LEFT JOIN overrides o ON o.key = b.key "
-        f"WHERE {' AND '.join(where)}",
-        tuple(params),
-    ).fetchone()["n"]
-    conn.close()
+    with closing(connect()) as conn:
+        rows = conn.execute(sql, (*params, limit, offset)).fetchall()
+        total = conn.execute(
+            "SELECT COUNT(*) AS n FROM books b LEFT JOIN overrides o ON o.key = b.key "
+            f"WHERE {' AND '.join(where)}",
+            tuple(params),
+        ).fetchone()["n"]
 
     books = [
         {
@@ -223,11 +193,8 @@ def api_books(
 def api_cover(key: str) -> FileResponse:
     # Проверяем не только наличие файла: после правки книги сканер ставит
     # has_cover=0, а старый jpg остаётся на диске до следующей генерации.
-    conn = db()
-    try:
+    with closing(connect()) as conn:
         row = conn.execute("SELECT has_cover FROM books WHERE key = ?", (key,)).fetchone()
-    finally:
-        conn.close()
     if row is None or not row["has_cover"]:
         raise HTTPException(status_code=404, detail="обложки нет")
 
@@ -239,10 +206,7 @@ def api_cover(key: str) -> FileResponse:
 
 @app.post("/api/rescan", dependencies=[Depends(require_own_page)])
 def api_rescan() -> JSONResponse:
-    try:
-        return JSONResponse(rescan())
-    except LibraryUnavailable as exc:
-        return JSONResponse({"error": str(exc)}, status_code=503)
+    return JSONResponse(rescan())
 
 
 @app.get("/api/settings", dependencies=[Depends(require_own_page)])
@@ -275,37 +239,20 @@ def api_settings_preview(root: str) -> dict:
     Ноль книг — не ошибка, а поле в ответе: пользователь вправе завести новую
     библиотеку с пустой папки, UI покажет предупреждение.
     """
-    try:
-        path = validate_root(root)
-    except InvalidRoot as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    path = validate_root(root)
     return {"root": str(path), **preview_root(path)}
 
 
 @app.post("/api/settings", dependencies=[Depends(require_own_page)])
 def api_update_settings(request: SettingsRequest) -> JSONResponse:
-    """Провалидировать, применить новый корень и сразу пересканировать.
+    """Применить новый корень (провалидировав) и сразу пересканировать.
 
-    Под тем же замком, что и /api/rescan: смена корня не должна пересечься
-    с параллельным сканом. Конфиг записывается ДО рескана: если новый корень
-    оказался недоступен, выбор уже применён (он был провалидирован), а 503
-    объясняет, почему каталог пуст.
+    Orchestration в service.apply_root: тот же замок, что у /api/rescan, —
+    смена корня не пересечётся с параллельным сканом. Конфиг пишется до
+    рескана: выбор уже провалидирован, а если корень недоступен — 503 от
+    exception_handler объясняет, почему каталог пуст.
     """
-    try:
-        path = validate_root(request.root)
-    except InvalidRoot as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    fields: dict[str, object] = {"root": str(path)}
-    if request.scan_on_start is not None:
-        fields["scan_on_start"] = request.scan_on_start
-
-    with _RESCAN_LOCK:
-        write_runtime_config(**fields)
-        try:
-            return JSONResponse(_rescan())
-        except LibraryUnavailable as exc:
-            return JSONResponse({"error": str(exc)}, status_code=503)
+    return JSONResponse(apply_root(request.root, request.scan_on_start))
 
 
 @app.post("/api/open", dependencies=[Depends(require_own_page)])
@@ -329,8 +276,7 @@ def api_edit(request: EditRequest) -> dict:
     Правки живут отдельно от таблицы books: рескан и повторное применение
     taxonomy.json их не затирают, а выдача в /api/books берёт их через COALESCE.
     """
-    conn = db()
-    try:
+    with closing(connect()) as conn:
         # Именно базовые значения из books, а НЕ COALESCE с overrides: иначе правка
         # одного поля затирала бы уже существующую правку другого. Пример: у книги
         # свой title, пользователь меняет только раздел — форма пришлёт тот же title,
@@ -368,8 +314,6 @@ def api_edit(request: EditRequest) -> dict:
             )
             action = "saved"
         conn.commit()
-    finally:
-        conn.close()
     return {"action": action, "key": request.key}
 
 
