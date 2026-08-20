@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { section: "*", q: "", sort: "title", sections: [] };
+const state = { section: "*", q: "", sort: "title", sections: [], local: true };
 
 const el = {
   sections: document.getElementById("sections"),
@@ -11,6 +11,7 @@ const el = {
   sort: document.getElementById("sort"),
   rescan: document.getElementById("rescan"),
   settingsBtn: document.getElementById("settingsBtn"),
+  burger: document.getElementById("burger"),
   settings: document.getElementById("settings"),
   sCurrent: document.getElementById("s-current"),
   sForm: document.getElementById("s-form"),
@@ -20,6 +21,10 @@ const el = {
   sPreview: document.getElementById("s-preview"),
   sInfo: document.getElementById("s-info"),
   sApply: document.getElementById("s-apply"),
+  files: document.getElementById("files"),
+  filesTitle: document.getElementById("files-title"),
+  filesList: document.getElementById("files-list"),
+  filesCancel: document.getElementById("files-cancel"),
   toast: document.getElementById("toast"),
   editor: document.getElementById("editor"),
   eKey: document.getElementById("e-key"),
@@ -73,14 +78,18 @@ function plural(n, one, few, many) {
 
 async function loadStatus() {
   const status = await api("/api/status");
+  state.local = status.local !== false;
+  // Удалённому гостю привилегии недоступны: не рисуем то, что вернёт 403.
+  // (css: .header-remote скрывает эти кнопки).
+  document.body.classList.toggle("remote", !state.local);
   const scanned = status.last_scan
     ? new Date(status.last_scan * 1000).toLocaleString("ru-RU")
     : "—";
   el.status.innerHTML = status.mounted
     ? `${status.total} ${plural(status.total, "карточка", "карточки", "карточек")}<br>`
       + `обложек ${status.covers}<br>скан ${scanned}`
-    : `<span class="warn">библиотека не смонтирована</span><br>`
-      + `${status.root}<br>каталог показан из кэша`;
+    : `<span class="warn">библиотека не смонтирована</span>`
+      + (status.root ? `<br>${status.root}<br>каталог показан из кэша` : "");
 }
 
 async function loadSections() {
@@ -101,6 +110,7 @@ async function loadSections() {
       state.section = item.name;
       [...el.sections.children].forEach((node) => node.classList.remove("active"));
       button.classList.add("active");
+      document.body.classList.remove("nav-open");  // мобильно: раздел выбран — панель закрыть
       loadBooks();
     };
     return button;
@@ -162,7 +172,7 @@ function cardNode(book) {
   }
 
   card.append(thumb, title, meta);
-  card.onclick = () => openBook(book);
+  card.onclick = () => (state.local ? openBook(book) : openFiles(book));
   return card;
 }
 
@@ -294,6 +304,41 @@ async function openBook(book) {
   }
 }
 
+function bytesLabel(sizeMb) {
+  if (sizeMb >= 1024) return `${(sizeMb / 1024).toFixed(1)} ГБ`;
+  if (sizeMb >= 1) return `${sizeMb.toFixed(1)} МБ`;
+  return `${Math.max(1, Math.round(sizeMb * 1024))} КБ`;
+}
+
+async function openFiles(book) {
+  el.filesTitle.textContent = book.title || book.key;
+  el.filesList.textContent = "";
+  el.files.showModal();
+  try {
+    const items = await api(`/api/files?key=${encodeURIComponent(book.key)}`);
+    if (!items.length) {
+      el.filesList.textContent = "файлов нет";
+      return;
+    }
+    el.filesList.append(...items.map((item) => {
+      const link = document.createElement("a");
+      link.href = `/api/download?key=${encodeURIComponent(book.key)}`
+        + `&file=${encodeURIComponent(item.file)}`;
+      link.download = item.name;
+      const name = document.createElement("span");
+      name.className = "f-name";
+      name.textContent = item.name;
+      const meta = document.createElement("span");
+      meta.className = "f-meta";
+      meta.textContent = `${item.format} · ${bytesLabel(item.size_mb)}`;
+      link.append(name, meta);
+      return link;
+    }));
+  } catch (error) {
+    el.filesList.textContent = `не удалось загрузить: ${error.message}`;
+  }
+}
+
 async function loadBooks() {
   const params = new URLSearchParams({ section: state.section, sort: state.sort });
   if (state.q) params.set("q", state.q);
@@ -321,7 +366,7 @@ el.sort.addEventListener("change", () => {
 });
 
 el.settingsBtn.addEventListener("click", openSettings);
-// Единственный путь к проверке: и клик по «Проверить», и Enter в поле пути —
+// Единственный путь к проверке пути: и клик по «Проверить», и Enter в поле —
 // это submit формы. preventDefault оставляет диалог открытым.
 el.sForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -329,6 +374,10 @@ el.sForm.addEventListener("submit", (event) => {
 });
 el.sCancel.addEventListener("click", () => el.settings.close());
 el.sApply.addEventListener("click", applySettings);
+el.filesCancel.addEventListener("click", () => el.files.close());
+el.burger.addEventListener("click", () => {
+  document.body.classList.toggle("nav-open");
+});
 // Путь изменили после проверки — предпросмотр больше не про него, и применять
 // непроверенное значение нельзя.
 el.sRoot.addEventListener("input", () => {

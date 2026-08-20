@@ -13,8 +13,12 @@ ExecStart=%h/.local/bin/uv run --directory %h/booklib booklib serve
 Restart=on-failure
 RestartSec=5
 
-# Слушать только петлю. Менять на 0.0.0.0 нельзя: /api/open запускает процессы.
-Environment=BOOKLIB_HOST=127.0.0.1
+# Слушать петлю по умолчанию. Слушать сеть (0.0.0.0) можно ТОЛЬКО потому, что
+# привилегированные ручки (/api/rescan, /api/settings*, /api/open, /api/book)
+# закрыты require_local и проверены тестами — иначе доступ к ним получит вся
+# локальная сеть и docker-бриджи. Смена на 0.0.0.0 без этого разделения —
+# уязвимость, читай docs/README «Доступ с телефона».
+Environment=BOOKLIB_HOST=0.0.0.0
 Environment=BOOKLIB_PORT=8765
 # Рескан при старте: инкрементальный, на неизменной библиотеке ~0.1 с.
 Environment=BOOKLIB_SCAN_ON_START=true

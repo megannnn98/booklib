@@ -175,7 +175,8 @@ def test_legacy_state_does_not_cross_into_foreign_slot(library: Path) -> None:
 
 def test_edits_survive_switch_away_and_back(library: Path) -> None:
     """overrides — единственные невосстановимые данные; смена корня их не теряет."""
-    client = TestClient(app)
+    # Явная петля: привилегированные ручки закрыты require_local.
+    client = TestClient(app, client=("127.0.0.1", 51202))
     make_book(library, "a.pdf")
     assert client.post("/api/rescan", headers=OWN_PAGE).status_code == 200
     saved = client.post("/api/book", json={"key": "a", "title": "Правка"}, headers=OWN_PAGE)
@@ -198,7 +199,8 @@ def test_edits_survive_switch_away_and_back(library: Path) -> None:
 
 
 def test_settings_api_preview_and_apply(library: Path) -> None:
-    client = TestClient(app)
+    # Явная петля: привилегированные ручки закрыты require_local.
+    client = TestClient(app, client=("127.0.0.1", 51202))
     make_book(library, "a.pdf")
     make_book(library, "b.pdf")
 

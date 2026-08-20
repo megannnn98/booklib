@@ -15,6 +15,7 @@
 
 <main>
   <header>
+    <button id="burger" type="button" title="Разделы">☰</button>
     <input id="search" type="search" placeholder="поиск по названию, автору, имени файла" autocomplete="off">
     <select id="sort">
       <option value="title">по названию</option>
@@ -65,6 +66,16 @@
       <button type="button" class="primary" id="s-apply" disabled>Применить</button>
     </menu>
   </form>
+</dialog>
+
+<!-- Лист файлов карточки: удалённый клиент нажимает на карточку и получает
+     ссылки на скачивание каждого формата. Без method="dialog": кнопка — обычная. -->
+<dialog id="files">
+  <div id="files-title"></div>
+  <div id="files-list"></div>
+  <menu>
+    <button type="button" id="files-cancel">Закрыть</button>
+  </menu>
 </dialog>
 
 <div id="toast" hidden></div>

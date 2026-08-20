@@ -203,8 +203,10 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
 
 /* ---------- диалоги ---------- */
 
-#editor, #settings {
+#editor, #settings, #files {
   width: min(440px, 92vw);
+  max-height: 85vh;
+  overflow-y: auto;
   padding: 20px;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -212,7 +214,7 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
   color: var(--text);
 }
 
-#editor::backdrop, #settings::backdrop { background: rgba(0, 0, 0, 0.6); }
+#editor::backdrop, #settings::backdrop, #files::backdrop { background: rgba(0, 0, 0, 0.6); }
 #editor h2, #settings h2 { margin: 0 0 4px; font-size: 16px; color: var(--accent); }
 
 #editor #e-key {
@@ -241,7 +243,7 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
   font: 14px/1.4 inherit;
 }
 
-#editor menu, #settings menu {
+#editor menu, #settings menu, #files menu {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
@@ -249,7 +251,7 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
   padding: 0;
 }
 
-#editor button, #settings button {
+#editor button, #settings button, #files button {
   padding: 8px 14px;
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -266,6 +268,41 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
 }
 
 #editor button:disabled, #settings button:disabled { opacity: 0.5; cursor: default; }
+
+/* лист файлов карточки (скачивание с телефона) */
+#files-title {
+  margin: 0 0 12px;
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+#files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#files-list a {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  text-decoration: none;
+}
+
+#files-list a:hover { border-color: var(--accent); }
+#files-list .f-name { word-break: break-word; }
+#files-list .f-meta { flex: 0 0 auto; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* роль: удалённому гостю привилегированные кнопки и правку не показываем */
+body.remote #settingsBtn, body.remote #rescan, body.remote .edit { display: none; }
 
 /* настройки: строка «поле пути + Проверить», результат проверки */
 #s-current {
@@ -315,3 +352,61 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
 }
 
 #toast.error { border-color: var(--danger); color: var(--danger); }
+
+/* ---------- мобильная вёрстка (≤700 CSS px) ---------- */
+
+/* кнопка «☰» в шапке — только на мобильном; десктоп её прячет */
+#burger { display: none; }
+
+@media (max-width: 700px) {
+  body { flex-direction: column; }
+
+  /* сайдбар — выездная панель слева */
+  #sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 50;
+    width: 260px;
+    height: 100vh;
+    transform: translateX(-100%);
+    transition: transform 0.18s ease;
+    box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
+  }
+  body.nav-open #sidebar { transform: translateX(0); }
+
+  main { padding: 12px 12px 30px; }
+
+  header {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  #burger {
+    display: block;
+    width: 44px;
+    height: 44px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--text);
+    font-size: 18px;
+    cursor: pointer;
+  }
+  #search { flex-basis: 100%; min-height: 44px; }
+  #sort, #rescan, #settingsBtn { min-height: 44px; }
+
+  #grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 14px 10px;
+  }
+
+  /* разделы — тап-цели крупнее */
+  #sections button { padding: 11px 10px; }
+
+  /* диалоги на всю ширину */
+  #editor, #settings, #files {
+    width: 95vw;
+    max-height: 90vh;
+  }
+  #files-list a { padding: 12px; min-height: 44px; }
+}

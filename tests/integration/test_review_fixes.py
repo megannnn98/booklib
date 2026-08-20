@@ -36,7 +36,8 @@ def client(library: Path, db: sqlite3.Connection) -> TestClient:
     sync(db, collect_groups())
     apply_sections(db)
     db.commit()
-    return TestClient(app)
+    # Явная петля: привилегированные ручки закрыты require_local.
+    return TestClient(app, client=("127.0.0.1", 51201))
 
 
 # ---------- F1: правка одного поля не должна копировать остальные ----------
