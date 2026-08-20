@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import json
 import shutil
+import sqlite3
+import sys
 import time
 from contextlib import asynccontextmanager, closing
+from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -20,6 +23,7 @@ from booklib import covers, opener
 from booklib.config.settings import field_source, get_settings
 from booklib.db import connect, init_state
 from booklib.errors import LibraryUnavailable
+from booklib.paths import library_root
 from booklib.rootcheck import InvalidRoot, preview_root, validate_root
 from booklib.service import apply_root, rescan
 from booklib.taxonomy import load_taxonomy
@@ -31,6 +35,12 @@ SORTS = {
     "year": "year IS NULL, year DESC",
     "size": "size DESC",
 }
+
+# Адреса, считающиеся «с самого компьютера». Только для них открыты
+# привилегированные ручки. X-Forwarded-For намеренно игнорируем: прокси перед
+# сервисом нет, и доверять заголовку, который может прийти от любого клиента
+# в сети, нельзя.
+LOCAL_HOSTS = frozenset({"127.0.0.1", "::1"})
 
 
 @asynccontextmanager
@@ -93,24 +103,55 @@ def library_mounted() -> bool:
     return get_settings().root.is_dir()
 
 
+def is_local_request(request: Request) -> bool:
+    """Запрос пришёл с самого компьютера (обратная петля), а не из сети."""
+    client = request.client
+    if client is None:
+        return False
+    host = client.host
+    return host in LOCAL_HOSTS
+
+
+def require_local(request: Request) -> None:
+    """Пускать только с самого компьютера. Fail closed: отсутствие пира — не локально."""
+    if not is_local_request(request):
+        raise HTTPException(
+            status_code=403, detail="привилегированная ручка доступна только с самого компьютера"
+        )
+
+
+# Все ручки, которые что-то меняют или запускают процессы, живут в одном роутере
+# с зависимостью require_local (+ require_own_page): новая мутирующая ручка,
+# добавленная сюда, не может «забыть» проверку роли — она на роутере целиком.
+priv_routes = APIRouter(
+    dependencies=[Depends(require_own_page), Depends(require_local)],
+    tags=["privileged"],
+)
+
+
 @app.get("/api/status")
-def api_status() -> dict:
+def api_status(request: Request) -> dict:
     settings = get_settings()
     mounted = library_mounted()
+    local = is_local_request(request)
     with closing(connect()) as conn:
         row = conn.execute(
             "SELECT COUNT(*) AS total, SUM(missing) AS missing, SUM(has_cover) AS covers FROM books"
         ).fetchone()
         last_scan = conn.execute("SELECT v FROM state WHERE k = 'last_scan'").fetchone()
-    return {
+    status = {
         "mounted": mounted,
-        "root": str(settings.root),
-        "db": str(settings.db_path),
+        "local": local,
         "total": row["total"] or 0,
         "missing": row["missing"] or 0,
         "covers": row["covers"] or 0,
         "last_scan": float(last_scan["v"]) if last_scan else None,
     }
+    if local:
+        # Абсолютные пути ФС хоста не показываем сетевому гостю.
+        status["root"] = str(settings.root)
+        status["db"] = str(settings.db_path)
+    return status
 
 
 @app.get("/api/sections")
@@ -204,12 +245,91 @@ def api_cover(key: str) -> FileResponse:
     return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "max-age=86400"})
 
 
-@app.post("/api/rescan", dependencies=[Depends(require_own_page)])
+def _card_files(key: str, conn: sqlite3.Connection) -> list[str]:
+    """Относительные пути файлов карточки в том порядке, что у primary_file
+    (FORMAT_PREFERENCE → имя): files_json кэширует group.files, уже отсортированный
+    по этому правилу. Несуществующая карточка — 404."""
+    row = conn.execute("SELECT files_json FROM books WHERE key = ?", (key,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"нет такой карточки: {key}")
+    return json.loads(row["files_json"])
+
+
+@app.get("/api/files")
+def api_files(key: str) -> list[dict[str, str | float | None]]:
+    """Лист файлов карточки для скачивания: ссылка на каждый формат.
+
+    Публичная ручка (без X-Booklib): листом можно делиться по ссылке. Порядок —
+    тот же, что у primary_file, чтобы первым стоял вариант, который удобнее
+    скачать целиком. Размер берём из stat на лету: в СУБД хранится только
+    суммарный размер книг, не пофайлово.
+    """
+    with closing(connect()) as conn:
+        files = _card_files(key, conn)
+    root = library_root()
+    result = []
+    for rel in files:
+        path = root / rel
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = None
+        result.append(
+            {
+                "file": rel,
+                "name": path.name,
+                "format": Path(rel).suffix.lower().lstrip("."),
+                "size_mb": round(size / 1048576, 2) if size is not None else None,
+            }
+        )
+    return result
+
+
+@app.get("/api/download")
+def api_download(request: Request, key: str, file: str) -> FileResponse:
+    """Отдать один файл карточки. Публичная — ссылкой можно делиться.
+
+    Две независимые guard'а: file должен быть элементом files_json этой карточки
+    (whitelist по построению — чужой файл в ЭТУ карточку не подсунешь), и после
+    resolve() путь обязан остаться в корне библиотеки (инвариант №5). Коды как у
+    opener: нет ключа → 404, файл не из карточки → 403, нет на диске → 503.
+    """
+    with closing(connect()) as conn:
+        files = _card_files(key, conn)
+    if file not in files:
+        raise HTTPException(status_code=403, detail="файл не принадлежит этой карточке")
+
+    root = library_root().resolve()
+    target = root / file
+    resolved = target.resolve()
+    if not resolved.is_relative_to(root):
+        raise HTTPException(status_code=403, detail="путь вне библиотеки")
+
+    try:
+        size = resolved.stat().st_size
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503, detail=f"файл недоступен (диск отключён?): {target}"
+        ) from exc
+
+    # Каждая выгрузка — в stderr (журнал journald): без этого «кто выкачал 4 ГБ»
+    # не диагностируется. Данные — просто факты, имен выкачанных файлов в лог
+    # целиком не дублируем (они уже в ответе).
+    print(
+        f"download ip={request.client.host if request.client else '?'} "
+        f"key={key} file={file} size={size}",
+        file=sys.stderr,
+        flush=True,
+    )
+    return FileResponse(resolved, filename=resolved.name)
+
+
+@priv_routes.post("/api/rescan")
 def api_rescan() -> JSONResponse:
     return JSONResponse(rescan())
 
 
-@app.get("/api/settings", dependencies=[Depends(require_own_page)])
+@priv_routes.get("/api/settings")
 def api_settings() -> dict:
     """Активные настройки + read-only справка. Смена корня — через POST."""
     settings = get_settings()
@@ -232,7 +352,7 @@ def api_settings() -> dict:
     }
 
 
-@app.get("/api/settings/preview", dependencies=[Depends(require_own_page)])
+@priv_routes.get("/api/settings/preview")
 def api_settings_preview(root: str) -> dict:
     """Предпросмотр нового корня: валидация + лёгкий подсчёт книг/аудио.
 
@@ -243,7 +363,7 @@ def api_settings_preview(root: str) -> dict:
     return {"root": str(path), **preview_root(path)}
 
 
-@app.post("/api/settings", dependencies=[Depends(require_own_page)])
+@priv_routes.post("/api/settings")
 def api_update_settings(request: SettingsRequest) -> JSONResponse:
     """Применить новый корень (провалидировав) и сразу пересканировать.
 
@@ -255,7 +375,7 @@ def api_update_settings(request: SettingsRequest) -> JSONResponse:
     return JSONResponse(apply_root(request.root, request.scan_on_start))
 
 
-@app.post("/api/open", dependencies=[Depends(require_own_page)])
+@priv_routes.post("/api/open")
 def api_open(request: OpenRequest) -> dict:
     try:
         return opener.open_book(request.key)
@@ -269,7 +389,7 @@ def api_open(request: OpenRequest) -> dict:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@app.post("/api/book", dependencies=[Depends(require_own_page)])
+@priv_routes.post("/api/book")
 def api_edit(request: EditRequest) -> dict:
     """Сохранить правку в overrides.
 
@@ -322,4 +442,5 @@ def index() -> FileResponse:
     return FileResponse(get_settings().static_dir / "index.html")
 
 
+app.include_router(priv_routes)
 app.mount("/static", StaticFiles(directory=get_settings().static_dir), name="static")

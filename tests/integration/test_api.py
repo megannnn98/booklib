@@ -28,7 +28,9 @@ def client(library: Path, db: sqlite3.Connection) -> TestClient:
     sync(db, collect_groups())
     apply_sections(db)
     db.commit()
-    return TestClient(app)
+    # Явная петля: привилегированные ручки закрыты require_local, а дефолтный
+    # TestClient отдаёт host='testclient', который петлей не считается.
+    return TestClient(app, client=("127.0.0.1", 51200))
 
 
 def test_status_and_books(client: TestClient) -> None:

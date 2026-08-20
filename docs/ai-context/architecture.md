@@ -106,5 +106,34 @@ scan_on_start)` — единственная реализация: валида�
 | Правила смотрят на имя файла, не на папку | `test_match_text_ignores_directory` |
 | Кириллица ищется без учёта регистра | `test_search_is_case_insensitive_for_cyrillic` |
 | Кириллица сортируется без учёта регистра | `test_cyrillic_title_sort_ignores_case` |
+| Удалённый клиент не трогает привилегированные ручки | `test_remote_is_blocked_from_privileged_routes` |
+| `/api/status` не показывает пути ФС гостю | `test_status_local_flag_and_paths` |
+| Гостю доступны лист файлов и скачивание | `test_files_lists_formats_in_primary_order`, `test_download_serves_file_with_attachment` |
+| Range/206 при скачивании | `test_download_supports_range` |
+| Скачивание вне карточки и traversal → 403 | `test_download_file_not_in_card_is_403`, `test_download_traversal_is_403` |
+
+## Доступ по сети
+
+Витрина умеет слушать сеть (`BOOKLIB_HOST=0.0.0.0`) для чтения и скачивания с
+телефона. Разделение ролей — на уровне роутеров, а не ручек:
+
+- **`priv_routes`** (`APIRouter`) — всё, что меняет или запускает процессы:
+  `/api/rescan`, `/api/settings*`, `/api/open`, `/api/book`. Две зависимости:
+  `require_own_page` (`X-Booklib`) и `require_local` (только `127.0.0.1`/`::1`,
+  fail-closed). Новая мутирующая ручка добавляется в этот роутер и не может
+  «забыть» проверку роли.
+- **`app`** — публичные ручки: `/api/status` (с `local` и скрытыми для гостя
+  путями ФС), `/api/cover`, `/api/files`, `/api/download`. То, чем можно
+  делиться ссылкой.
+
+`/api/download` защищён двумя независимыми guard'ами: `file` обязан быть
+элементом `files_json` карточки (whitelist по построению) и после `resolve()`
+путь остаётся в корне библиотеки (`is_relative_to`, инвариант №5). Лист файлов
+и порядок форматов берутся из `files_json` = `group.files`, уже упорядоченный по
+`FORMAT_PREFERENCE`.
+
+Файрвол на машине не поднят не случайно, а как принятое решение в пользу
+чтения библиотеке всей домашней сетью и docker-бриджами; защита привилегий — это
+`require_local` + тесты, а не адрес. Документировано в README «Доступ с телефона».
 
 Тесты работают на временном корне и настоящую библиотеку не трогают.
