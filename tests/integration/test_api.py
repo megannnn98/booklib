@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 import time
 from pathlib import Path
@@ -14,6 +15,7 @@ from booklib.grouping import collect_groups
 from booklib.opener import BookNotFound, OutsideLibrary, resolve_target
 from booklib.scanner import sync
 from booklib.taxonomy import apply as apply_sections
+from booklib.tools import REQUIRED_TOOLS
 from tests.conftest import make_book
 
 OWN_PAGE = {"X-Booklib": "1"}
@@ -76,7 +78,30 @@ def test_settings_report(client: TestClient, library: Path) -> None:
     assert settings["db"].endswith("library.db")
     assert "roots" in settings["db"]
     assert settings["read_only"]["host"] == "127.0.0.1"
-    assert settings["read_only"]["tools"]["pdftocairo"] is True
+    # Про утилиты проверяем контракт ответа, а не хост: в CI системного poppler
+    # нет, и `tools["pdftocairo"] is True` делало тест проверкой окружения —
+    # он краснел на машине без утилит, ничего не сообщая о коде. Что значение
+    # действительно приходит из shutil.which, проверяет тест ниже.
+    tools = settings["read_only"]["tools"]
+    assert set(tools) == set(REQUIRED_TOOLS)
+    assert all(isinstance(found, bool) for found in tools.values())
+
+
+def test_settings_tools_reflect_which(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """tools отражает результат shutil.which, а не константу.
+
+    Мутация: захардкодить True в api_settings — тест краснеет на утилите,
+    которой which не нашёл.
+    """
+    missing, *present = REQUIRED_TOOLS
+    monkeypatch.setattr(
+        shutil, "which", lambda tool: None if tool == missing else f"/usr/bin/{tool}"
+    )
+
+    tools = client.get("/api/settings", headers=OWN_PAGE).json()["read_only"]["tools"]
+
+    assert tools[missing] is False
+    assert all(tools[tool] is True for tool in present)
 
 
 def test_open_unknown_key_is_404(client: TestClient) -> None:
