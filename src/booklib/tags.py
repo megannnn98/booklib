@@ -175,6 +175,17 @@ def update_tag(
         new_description = tag["description"]
         if description is not DESCRIPTION_UNSET:
             new_description = normalize_description(cast(str | None, description))
+        # Переименование — вторая дверь к инварианту «алиас != имя тега»: сам
+        # add_alias его держит, а _ensure_name_alias_free исключает собственный
+        # тег, и без этой проверки tag.name спокойно становится своим же алиасом
+        # (name и alias — UNIQUE в РАЗНЫХ таблицах, СУБД такой конфликт не видит).
+        if new_name != tag["name"]:
+            own_alias = conn.execute(
+                "SELECT 1 FROM tag_aliases WHERE tag_id = ? AND alias = ?",
+                (tag_id, new_name),
+            ).fetchone()
+            if own_alias is not None:
+                raise TagConflict("имя совпадает с алиасом этого тега")
         _ensure_name_alias_free(conn, tag_id, new_name)
         if new_name != tag["name"] and _tag_by_name(conn, new_name) is not None:
             raise TagConflict("тег с таким именем уже существует")

@@ -96,6 +96,18 @@ def test_alias_matching_name_is_rejected(tmp_path: Path) -> None:
         add_alias(conn, tag["id"], "диалектика")
 
 
+def test_update_tag_rejects_name_matching_own_alias(tmp_path: Path) -> None:
+    """Переименование — вторая дверь к инварианту «алиас != имя»: она тоже закрыта."""
+    conn = connect_at(tmp_path / "tags.db")
+    tag = create_tag(conn, "Диалектика", "topic", None)
+    add_alias(conn, tag["id"], "Логика")
+
+    with pytest.raises(TagConflict):
+        update_tag(conn, tag["id"], "логика", None)
+
+    assert list_tags(conn)[0]["name"] == "Диалектика"
+
+
 def test_aliases_are_case_insensitively_unique(tmp_path: Path) -> None:
     conn = connect_at(tmp_path / "tags.db")
     left = create_tag(conn, "Гегель", "topic", None)

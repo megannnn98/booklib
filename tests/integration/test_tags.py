@@ -181,6 +181,25 @@ def test_alias_matching_canonical_name_conflicts_via_api(
     )
 
 
+def test_rename_to_own_alias_conflicts_via_api(library: Path, db: sqlite3.Connection) -> None:
+    client = _client(library, db)
+    tag = client.post(
+        "/api/tags",
+        json={"name": "Диалектика", "kind": "topic"},
+        headers=OWN_PAGE,
+    ).json()
+    client.post(
+        f"/api/tags/{tag['id']}/aliases",
+        json={"alias": "Логика"},
+        headers=OWN_PAGE,
+    )
+
+    response = client.put(f"/api/tags/{tag['id']}", json={"name": "логика"}, headers=OWN_PAGE)
+
+    assert response.status_code == 409
+    assert client.get("/api/tags").json()[0]["name"] == "Диалектика"
+
+
 def test_tag_validation_errors_are_422(library: Path, db: sqlite3.Connection) -> None:
     client = _client(library, db)
     assert client.post("/api/tags", headers=OWN_PAGE).status_code == 422
