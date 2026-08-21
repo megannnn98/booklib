@@ -148,7 +148,7 @@ def create_tag(
             raise TagConflict("тег с таким именем уже существует")
         conn.execute(
             "INSERT INTO tags(name, kind, description, created_at) VALUES(?,?,?,?)",
-            (name, kind, description or None, time.time()),
+            (name, kind, description, time.time()),
         )
         tag_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
         conn.commit()
@@ -344,7 +344,12 @@ def resolve(conn: sqlite3.Connection, names: list[str]) -> list[int]:
     return ids
 
 
-def _replace_book_tags(conn: sqlite3.Connection, key: str, names: list[str]) -> dict:
+def replace_book_tags(conn: sqlite3.Connection, key: str, names: list[str]) -> dict:
+    """Заменить manual-связи книги на указанный набор тегов.
+
+    BEGIN/commit/rollback управляются вызывающим: эта функция предполагает
+    уже открытое соединение в нужной транзакции и не начинает новую сама.
+    """
     book = conn.execute("SELECT 1 FROM books WHERE key = ?", (key,)).fetchone()
     if book is None:
         raise TagNotFound(f"нет такой карточки: {key}")
@@ -364,7 +369,7 @@ def _replace_book_tags(conn: sqlite3.Connection, key: str, names: list[str]) -> 
 def set_book_tags(conn: sqlite3.Connection, key: str, names: list[str]) -> dict:
     _begin_immediate(conn)
     try:
-        result = _replace_book_tags(conn, key, names)
+        result = replace_book_tags(conn, key, names)
         conn.commit()
         return result
     except Exception:

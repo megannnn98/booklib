@@ -497,7 +497,7 @@ def api_edit(request: EditRequest) -> dict:
         try:
             if request.reset:
                 conn.execute("DELETE FROM overrides WHERE key = ?", (request.key,))
-                tags._replace_book_tags(conn, request.key, [])
+                tags.replace_book_tags(conn, request.key, [])
                 action = "reset"
             else:
                 if has_field_changes:
@@ -508,11 +508,11 @@ def api_edit(request: EditRequest) -> dict:
                         "updated_at=excluded.updated_at",
                         (request.key, title, author, section, time.time()),
                     )
-                elif request.tags is None:
+                else:
                     conn.execute("DELETE FROM overrides WHERE key = ?", (request.key,))
 
                 if request.tags is not None:
-                    tags._replace_book_tags(conn, request.key, request.tags)
+                    tags.replace_book_tags(conn, request.key, request.tags)
                     action = "saved"
                 elif has_field_changes:
                     action = "saved"

@@ -372,6 +372,9 @@ function cardNode(book) {
       const more = document.createElement("span");
       more.className = "tag-more";
       more.textContent = `+${book.tags.length - 3}`;
+      more.onclick = (event) => {
+        event.stopPropagation();
+      };
       tagsBox.append(more);
     }
   }

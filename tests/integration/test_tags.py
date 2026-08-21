@@ -422,6 +422,30 @@ def test_edit_saves_fields_and_tags_in_one_request(library: Path, db: sqlite3.Co
     assert [(row["tag_id"], row["source"]) for row in rows] == [(tag["id"], "manual")]
 
 
+def test_edit_with_tags_and_blank_fields_clears_overrides(
+    library: Path, db: sqlite3.Connection
+) -> None:
+    client = _client(library, db)
+    key = "philosophy/Эвола - Даосизм - 2020"
+    tag = _make_tag(client, "Гегель")
+    client.post("/api/book", json={"key": key, "title": "Мой заголовок"}, headers=OWN_PAGE)
+
+    response = client.post(
+        "/api/book",
+        json={"key": key, "title": "", "author": "", "section": "", "tags": [tag["name"]]},
+        headers=OWN_PAGE,
+    )
+
+    assert response.json()["action"] == "saved"
+    assert (
+        db.execute("SELECT COUNT(*) AS n FROM overrides WHERE key = ?", (key,)).fetchone()[0] == 0
+    )
+    base = db.execute("SELECT title, section FROM books WHERE key = ?", (key,)).fetchone()
+    book = next(item for item in client.get("/api/books").json()["books"] if item["key"] == key)
+    assert (book["title"], book["section"]) == (base["title"], base["section"])
+    assert [item["name"] for item in book["tags"]] == [tag["name"]]
+
+
 def test_reset_clears_manual_overrides_and_keeps_auto_tags(
     library: Path, db: sqlite3.Connection
 ) -> None:
