@@ -16,6 +16,7 @@ booklib.grouping          обход дерева → карточки (BookGrou
 booklib.scanner           инкрементальный диф карточек → SQLite
 booklib.covers            превью: pdftocairo / ddjvu+Pillow / zip(epub) / base64(fb2)
 booklib.taxonomy          разделы: overrides → taxonomy.json → rules.json → «Новое»
+booklib.tags               словарь тегов и ручные назначения книгам
 booklib.opener            DBus FileManager1.ShowItems, запасной xdg-open
 booklib.api.app           FastAPI + статика витрины
 booklib.cli.app           Typer CLI, точка входа `booklib`
@@ -66,6 +67,7 @@ scan_on_start)` — единственная реализация: валида�
 | Резолв конфигов | `Settings.resolve_config_file(name)` → (путь, источник) | один путь для taxonomy и rules: оверрайд → пакетный дефолт → «нет файла» |
 | `config_dir` по умолчанию | каталог чекаута, иначе `~/.config/booklib` | в wheel `REPO_DIR` указывает внутрь site-packages |
 | Ручные правки | таблица `overrides` | переживают рескан и смену taxonomy |
+| Теги | таблицы `tags`, `tag_aliases`, `book_tags` | вторая ось классификации; ручные назначения живут в SQLite |
 
 ## Модель карточки
 
@@ -107,6 +109,7 @@ scan_on_start)` — единственная реализация: валида�
 | Кириллица ищется без учёта регистра | `test_search_is_case_insensitive_for_cyrillic` |
 | Кириллица сортируется без учёта регистра | `test_cyrillic_title_sort_ignores_case` |
 | Удалённый клиент не трогает привилегированные ручки | `test_remote_is_blocked_from_privileged_routes` |
+| `GET /api/tags` и фильтр по тегу доступны гостю | `test_public_tags_and_book_tags`, `test_remote_can_read_catalog_and_covers` |
 | `/api/status` не показывает пути ФС гостю | `test_status_local_flag_and_paths` |
 | Гостю доступны лист файлов и скачивание | `test_files_lists_formats_in_primary_order`, `test_download_serves_file_with_attachment` |
 | Range/206 при скачивании | `test_download_supports_range` |
@@ -118,12 +121,14 @@ scan_on_start)` — единственная реализация: валида�
 телефона. Разделение ролей — на уровне роутеров, а не ручек:
 
 - **`priv_routes`** (`APIRouter`) — всё, что меняет или запускает процессы:
-  `/api/rescan`, `/api/settings*`, `/api/open`, `/api/book`. Две зависимости:
+  `/api/rescan`, `/api/settings*`, `/api/open`, `/api/book`, теги-CRUD и
+  `PUT /api/book/{key:path}/tags`. Две зависимости:
   `require_own_page` (`X-Booklib`) и `require_local` (только `127.0.0.1`/`::1`,
   fail-closed). Новая мутирующая ручка добавляется в этот роутер и не может
   «забыть» проверку роли.
 - **`app`** — публичные ручки: `/api/status` (с `local` и скрытыми для гостя
-  путями ФС), `/api/cover`, `/api/files`, `/api/download`. То, чем можно
+  путями ФС), `/api/cover`, `/api/files`, `/api/download`, `GET /api/tags`.
+  То, чем можно
   делиться ссылкой.
 
 `/api/download` защищён двумя независимыми guard'ами: `file` обязан быть

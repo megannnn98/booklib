@@ -23,9 +23,12 @@
       <option value="year">по году</option>
       <option value="size">по размеру</option>
     </select>
+    <button id="tagsBtn" type="button" title="Теги">🏷 теги 0</button>
     <button id="settingsBtn" type="button" title="Настройки">⚙</button>
+    <button id="tagsAdminBtn" type="button" title="Словарь тегов">✎🏷</button>
     <button id="rescan" type="button">Обновить</button>
   </header>
+  <div id="tagbar" hidden></div>
   <div id="counter"></div>
   <div id="grid"></div>
 </main>
@@ -38,6 +41,15 @@
     <label>Автор<input id="e-author" autocomplete="off"></label>
     <label>Раздел<input id="e-section" list="sections-list" autocomplete="off"></label>
     <datalist id="sections-list"></datalist>
+    <div id="e-tags-block">
+      <label>Теги</label>
+      <div id="e-tags"></div>
+      <div id="e-tags-row">
+        <input id="e-tag-input" list="tags-list" autocomplete="off" placeholder="добавить тег">
+        <button id="e-tag-add" type="button">Добавить</button>
+      </div>
+      <datalist id="tags-list"></datalist>
+    </div>
     <menu>
       <button value="cancel">Отмена</button>
       <button value="reset">Сбросить правки</button>
@@ -76,6 +88,40 @@
   <menu>
     <button type="button" id="files-cancel">Закрыть</button>
   </menu>
+</dialog>
+
+<dialog id="tagfilter">
+  <form id="tf-form">
+    <h2>Теги</h2>
+    <input id="tf-search" type="search" placeholder="поиск по имени или алиасу" autocomplete="off">
+    <div id="tf-list"></div>
+    <menu>
+      <button type="button" id="tf-clear">Сбросить</button>
+      <button type="button" id="tf-close">Закрыть</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="tagsadmin">
+  <form id="ta-form">
+    <h2>Словарь тегов</h2>
+    <input id="ta-search" type="search" placeholder="поиск" autocomplete="off">
+    <div id="ta-list"></div>
+    <label>Название<input id="ta-name" autocomplete="off"></label>
+    <label>Тип<input id="ta-kind" autocomplete="off"></label>
+    <label>Описание<textarea id="ta-description" rows="3"></textarea></label>
+    <label>Алиас<input id="ta-alias" autocomplete="off"></label>
+    <label>Цель объединения<input id="ta-merge-target" autocomplete="off"></label>
+    <div id="ta-actions">
+      <button type="button" id="ta-create">Создать</button>
+      <button type="button" id="ta-save" class="primary">Сохранить</button>
+      <button type="button" id="ta-add-alias">Добавить алиас</button>
+      <button type="button" id="ta-remove-alias">Удалить алиас</button>
+      <button type="button" id="ta-merge">Объединить</button>
+      <button type="button" id="ta-delete">Удалить</button>
+      <button type="button" id="ta-close">Закрыть</button>
+    </div>
+  </form>
 </dialog>
 
 <div id="toast" hidden></div>

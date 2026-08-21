@@ -103,9 +103,69 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
   cursor: pointer;
 }
 
+#tagsBtn, #tagsAdminBtn {
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
 #rescan:disabled { opacity: 0.5; cursor: progress; }
 
 #counter { margin-bottom: 12px; color: var(--muted); font-size: 12px; }
+
+#tagbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+  align-items: center;
+}
+
+.tag-chip,
+.tag-reset,
+.admin-row {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+}
+
+.tag-reset {
+  padding: 4px 10px;
+  color: var(--muted);
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 54px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+
+.tag-more {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--panel-hi);
+  color: var(--muted);
+  font-size: 11px;
+}
 
 /* ---------- сетка ---------- */
 
@@ -203,7 +263,7 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
 
 /* ---------- диалоги ---------- */
 
-#editor, #settings, #files {
+#editor, #settings, #files, #tagfilter, #tagsadmin {
   width: min(440px, 92vw);
   max-height: 85vh;
   overflow-y: auto;
@@ -214,7 +274,9 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
   color: var(--text);
 }
 
-#editor::backdrop, #settings::backdrop, #files::backdrop { background: rgba(0, 0, 0, 0.6); }
+#editor::backdrop, #settings::backdrop, #files::backdrop, #tagfilter::backdrop, #tagsadmin::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
 #editor h2, #settings h2 { margin: 0 0 4px; font-size: 16px; color: var(--accent); }
 
 #editor #e-key {
@@ -243,6 +305,48 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
   font: 14px/1.4 inherit;
 }
 
+#editor textarea, #tagsadmin textarea, #tagfilter input, #tagsadmin input {
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 inherit;
+}
+
+#e-tags-block { margin: 10px 0 12px; }
+#e-tags-row, #ta-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+#e-tags-row input, #ta-actions button { min-height: 36px; }
+#e-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+
+#tf-list, #ta-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.admin-row {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  border-radius: 8px;
+}
+
 #editor menu, #settings menu, #files menu {
   display: flex;
   justify-content: flex-end;
@@ -261,13 +365,13 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
   cursor: pointer;
 }
 
-#editor button.primary, #settings button.primary {
+#editor button.primary, #settings button.primary, #tagsadmin button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: #14161a;
 }
 
-#editor button:disabled, #settings button:disabled { opacity: 0.5; cursor: default; }
+#editor button:disabled, #settings button:disabled, #tagsadmin button:disabled { opacity: 0.5; cursor: default; }
 
 /* лист файлов карточки (скачивание с телефона) */
 #files-title {
@@ -302,7 +406,7 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
 #files-list .f-meta { flex: 0 0 auto; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 
 /* роль: удалённому гостю привилегированные кнопки и правку не показываем */
-body.remote #settingsBtn, body.remote #rescan, body.remote .edit { display: none; }
+body.remote #settingsBtn, body.remote #rescan, body.remote #tagsAdminBtn, body.remote .edit { display: none; }
 
 /* настройки: строка «поле пути + Проверить», результат проверки */
 #s-current {
@@ -393,7 +497,7 @@ body.remote #settingsBtn, body.remote #rescan, body.remote .edit { display: none
     cursor: pointer;
   }
   #search { flex-basis: 100%; min-height: 44px; }
-  #sort, #rescan, #settingsBtn { min-height: 44px; }
+  #sort, #rescan, #settingsBtn, #tagsBtn, #tagsAdminBtn { min-height: 44px; }
 
   #grid {
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
@@ -404,7 +508,7 @@ body.remote #settingsBtn, body.remote #rescan, body.remote .edit { display: none
   #sections button { padding: 11px 10px; }
 
   /* диалоги на всю ширину */
-  #editor, #settings, #files {
+  #editor, #settings, #files, #tagfilter, #tagsadmin {
     width: 95vw;
     max-height: 90vh;
   }

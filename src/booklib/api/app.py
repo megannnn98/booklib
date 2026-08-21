@@ -4,6 +4,8 @@
 (СУБД, кэш обложек) лежит в ~/.cache/booklib.
 """
 
+# ruff: noqa: PLR0917
+
 from __future__ import annotations
 
 import json
@@ -13,13 +15,14 @@ import sys
 import time
 from contextlib import asynccontextmanager, closing
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from booklib import covers, opener
+from booklib import covers, opener, tags
 from booklib.config.settings import field_source, get_settings
 from booklib.db import connect, init_state
 from booklib.errors import LibraryUnavailable
@@ -63,6 +66,14 @@ def _unavailable(_request, exc: LibraryUnavailable) -> JSONResponse:
 @app.exception_handler(InvalidRoot)
 def _invalid_root(_request, exc: InvalidRoot) -> JSONResponse:
     return JSONResponse({"detail": str(exc)}, status_code=400)
+
+
+@app.exception_handler(tags.TagError)
+def _tag_error(_request, exc: tags.TagError) -> JSONResponse:
+    payload: dict[str, object] = {"detail": str(exc)}
+    if isinstance(exc, tags.TagInUse):
+        payload["count"] = exc.count
+    return JSONResponse(payload, status_code=exc.status)
 
 
 class OpenRequest(BaseModel):
@@ -169,17 +180,25 @@ def api_sections() -> list[dict]:
     return [{"name": name, "count": counts[name]} for name in ordered]
 
 
+@app.get("/api/tags")
+def api_tags() -> list[dict]:
+    with closing(connect()) as conn:
+        return tags.list_tags(conn)
+
+
 @app.get("/api/books")
 def api_books(
     section: str | None = None,
     q: str | None = None,
+    tag: Annotated[list[str] | None, Query()] = None,
     sort: str = "title",
     limit: int = Query(500, le=2000),
     offset: int = 0,
-) -> dict:
+) -> dict:  # noqa: PLR0917
     order = SORTS.get(sort, SORTS["title"])
     where = ["b.missing = 0"]
     params: list = []
+    tag_ids: list[int] = []
 
     if section and section != "*":
         where.append("COALESCE(o.section, b.section) = ?")
@@ -188,11 +207,29 @@ def api_books(
         # % и _ в запросе — это символы из имён файлов ("C++", "_v2", "x86_64", "100%"),
         # а не wildcard'ы. Без ESCAPE запрос "100%" матчил бы вообще всё.
         escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        where.append(
+        title_clause = (
             "pylower(COALESCE(o.title, b.title) || ' ' || COALESCE(o.author, b.author, '') "
             "|| ' ' || b.key) LIKE ? ESCAPE '\\'"
         )
-        params.append(f"%{escaped.lower()}%")
+        tag_clause = (
+            "EXISTS (SELECT 1 FROM book_tags bt JOIN tags t ON t.id = bt.tag_id "
+            "LEFT JOIN tag_aliases a ON a.tag_id = t.id "
+            "WHERE bt.book_key = b.key AND (pylower(t.name) LIKE ? ESCAPE '\\' "
+            "OR pylower(a.alias) LIKE ? ESCAPE '\\'))"
+        )
+        where.append(f"({title_clause} OR {tag_clause})")
+        params.extend([f"%{escaped.lower()}%"] * 3)
+    if tag:
+        with closing(connect()) as conn:
+            try:
+                tag_ids = tags.resolve(conn, tag)
+            except tags.TagNotFound as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        for tag_id in tag_ids:
+            where.append(
+                "EXISTS (SELECT 1 FROM book_tags bt WHERE bt.book_key = b.key AND bt.tag_id = ?)"
+            )
+            params.append(tag_id)
 
     sql = (
         "SELECT b.key, COALESCE(o.title, b.title) AS title, "
@@ -210,6 +247,7 @@ def api_books(
             f"WHERE {' AND '.join(where)}",
             tuple(params),
         ).fetchone()["n"]
+        book_tags = tags.tags_for(conn, [row["key"] for row in rows])
 
     books = [
         {
@@ -224,6 +262,7 @@ def api_books(
             "kind": row["kind"],
             "dir": row["dir"],
             "edited": bool(row["edited"]),
+            "tags": book_tags.get(row["key"], []),
         }
         for row in rows
     ]
@@ -435,6 +474,56 @@ def api_edit(request: EditRequest) -> dict:
             action = "saved"
         conn.commit()
     return {"action": action, "key": request.key}
+
+
+@priv_routes.post("/api/tags")
+def api_create_tag(request: dict) -> dict:
+    with closing(connect()) as conn:
+        return tags.create_tag(
+            conn, request["name"], request.get("kind", "custom"), request.get("description")
+        )
+
+
+@priv_routes.put("/api/tags/{tag_id}")
+def api_update_tag(tag_id: int, request: dict) -> dict:
+    with closing(connect()) as conn:
+        return tags.update_tag(
+            conn,
+            tag_id,
+            request.get("name"),
+            request.get("kind"),
+            request.get("description"),
+        )
+
+
+@priv_routes.post("/api/tags/{tag_id}/aliases")
+def api_add_alias(tag_id: int, request: dict) -> dict:
+    with closing(connect()) as conn:
+        return tags.add_alias(conn, tag_id, request["alias"])
+
+
+@priv_routes.delete("/api/tags/{tag_id}/aliases")
+def api_remove_alias(tag_id: int, alias: str) -> dict:
+    with closing(connect()) as conn:
+        return tags.remove_alias(conn, tag_id, alias)
+
+
+@priv_routes.delete("/api/tags/{tag_id}")
+def api_delete_tag(tag_id: int) -> dict:
+    with closing(connect()) as conn:
+        return tags.delete_tag(conn, tag_id)
+
+
+@priv_routes.post("/api/tags/merge")
+def api_merge_tags(request: dict) -> dict:
+    with closing(connect()) as conn:
+        return tags.merge_tags(conn, request["source"], request["target"])
+
+
+@priv_routes.put("/api/book/{key:path}/tags")
+def api_set_book_tags(key: str, request: dict) -> dict:
+    with closing(connect()) as conn:
+        return tags.set_book_tags(conn, key, request["tags"])
 
 
 @app.get("/")
