@@ -8,6 +8,7 @@ import pytest
 
 from booklib.db import connect_at
 from booklib.tags import (
+    DESCRIPTION_UNSET,
     TagConflict,
     TagInUse,
     TagInvalid,
@@ -37,11 +38,37 @@ def test_create_tag_rejects_unknown_kind(tmp_path: Path) -> None:
         create_tag(conn, "Гегель", "unknown", None)
 
 
+def test_create_tag_treats_blank_description_as_absent(tmp_path: Path) -> None:
+    conn = connect_at(tmp_path / "tags.db")
+    tag = create_tag(conn, "Гегель", "topic", "   ")
+
+    assert tag["description"] is None
+
+
+def test_create_tag_trims_description(tmp_path: Path) -> None:
+    conn = connect_at(tmp_path / "tags.db")
+    tag = create_tag(conn, "Гегель", "topic", "  немецкая философия  ")
+
+    assert tag["description"] == "немецкая философия"
+
+
 def test_tags_are_case_insensitively_unique(tmp_path: Path) -> None:
     conn = connect_at(tmp_path / "tags.db")
     create_tag(conn, "Гегель", "topic", None)
     with pytest.raises(TagConflict):
         create_tag(conn, "гегель", "topic", None)
+
+
+def test_create_tag_rejects_empty_name(tmp_path: Path) -> None:
+    conn = connect_at(tmp_path / "tags.db")
+    with pytest.raises(TagInvalid):
+        create_tag(conn, "   ", "topic", None)
+
+
+def test_create_tag_rejects_empty_kind(tmp_path: Path) -> None:
+    conn = connect_at(tmp_path / "tags.db")
+    with pytest.raises(TagInvalid):
+        create_tag(conn, "Гегель", "   ", None)
 
 
 def test_name_and_alias_conflict_cross_tables(tmp_path: Path) -> None:
@@ -59,6 +86,14 @@ def test_empty_alias_is_rejected(tmp_path: Path) -> None:
     tag = create_tag(conn, "Гегель", "topic", None)
     with pytest.raises(TagInvalid):
         add_alias(conn, tag["id"], "   ")
+
+
+def test_alias_matching_name_is_rejected(tmp_path: Path) -> None:
+    conn = connect_at(tmp_path / "tags.db")
+    tag = create_tag(conn, "Диалектика", "topic", None)
+
+    with pytest.raises(TagConflict):
+        add_alias(conn, tag["id"], "диалектика")
 
 
 def test_aliases_are_case_insensitively_unique(tmp_path: Path) -> None:
@@ -80,6 +115,24 @@ def test_update_tag_changes_name_kind_and_description(tmp_path: Path) -> None:
     assert updated["name"] == "Диалектика"
     assert updated["kind"] == "person"
     assert updated["description"] == "new"
+
+
+def test_update_tag_preserves_description_when_missing(tmp_path: Path) -> None:
+    conn = connect_at(tmp_path / "tags.db")
+    tag = create_tag(conn, "Гегель", "topic", "old")
+
+    updated = update_tag(conn, tag["id"], "Диалектика", None, DESCRIPTION_UNSET)
+
+    assert updated["description"] == "old"
+
+
+def test_update_tag_clears_description_when_blank(tmp_path: Path) -> None:
+    conn = connect_at(tmp_path / "tags.db")
+    tag = create_tag(conn, "Гегель", "topic", "old")
+
+    updated = update_tag(conn, tag["id"], None, None, "   ")
+
+    assert updated["description"] is None
 
 
 def test_update_tag_rejects_alias_conflict(tmp_path: Path) -> None:

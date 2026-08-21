@@ -358,8 +358,9 @@ function cardNode(book) {
     textContent: parts.join(" · "),
   });
 
+  let tagsBox = null;
   if (book.tags && book.tags.length) {
-    const tagsBox = document.createElement("div");
+    tagsBox = document.createElement("div");
     tagsBox.className = "tags";
     const visible = book.tags.slice(0, 3);
     renderTagChips(tagsBox, visible, null, (tag) => {
@@ -373,16 +374,17 @@ function cardNode(book) {
       more.textContent = `+${book.tags.length - 3}`;
       tagsBox.append(more);
     }
-    card.append(tagsBox);
   }
 
+  card.append(thumb, title, meta);
+  if (tagsBox) {
+    card.append(tagsBox);
+  }
   if (book.edited) {
     card.append(Object.assign(document.createElement("div"), {
       className: "edited", textContent: "правлено",
     }));
   }
-
-  card.append(thumb, title, meta);
   card.onclick = () => (state.local ? openBook(book) : openFiles(book));
   return card;
 }
@@ -410,15 +412,9 @@ function editBook(book) {
             title: el.eTitle.value,
             author: el.eAuthor.value,
             section: el.eSection.value,
+            tags: currentTagNames(),
           };
       const result = await postJson("/api/book", payload);
-      if (action !== "reset") {
-        await api(`/api/book/${encodeURIComponent(book.key)}/tags`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tags: currentTagNames() }),
-        });
-      }
       toast(result.action === "reset" ? "Правки сброшены" : "Сохранено");
       await Promise.all([loadTags(), loadSections(), loadBooks()]);
     } catch (error) {

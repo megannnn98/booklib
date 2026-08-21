@@ -63,6 +63,124 @@ def test_public_tags_and_book_tags(library: Path, db: sqlite3.Connection) -> Non
     assert search["total"] == 1
 
 
+def test_tag_description_semantics_via_api(library: Path, db: sqlite3.Connection) -> None:
+    client = _client(library, db)
+
+    blank = client.post(
+        "/api/tags",
+        json={"name": "Гегель", "kind": "topic", "description": ""},
+        headers=OWN_PAGE,
+    ).json()
+    null_desc = client.post(
+        "/api/tags",
+        json={"name": "Философия", "kind": "topic", "description": None},
+        headers=OWN_PAGE,
+    ).json()
+    missing = client.post(
+        "/api/tags",
+        json={"name": "Диалектика", "kind": "topic"},
+        headers=OWN_PAGE,
+    ).json()
+
+    assert blank["description"] is None
+    assert null_desc["description"] is None
+    assert missing["description"] is None
+    assert (
+        db.execute("SELECT description FROM tags WHERE id = ?", (blank["id"],)).fetchone()[0]
+        is None
+    )
+    assert (
+        db.execute("SELECT description FROM tags WHERE id = ?", (null_desc["id"],)).fetchone()[0]
+        is None
+    )
+    assert (
+        db.execute("SELECT description FROM tags WHERE id = ?", (missing["id"],)).fetchone()[0]
+        is None
+    )
+
+
+def test_tag_description_can_be_cleared_and_preserved_via_api(
+    library: Path, db: sqlite3.Connection
+) -> None:
+    client = _client(library, db)
+    created = client.post(
+        "/api/tags",
+        json={"name": "Гегель", "kind": "topic", "description": "немецкая философия"},
+        headers=OWN_PAGE,
+    ).json()
+
+    cleared = client.put(
+        f"/api/tags/{created['id']}",
+        json={"description": ""},
+        headers=OWN_PAGE,
+    ).json()
+    assert cleared["description"] is None
+
+    restored = client.put(
+        f"/api/tags/{created['id']}",
+        json={"name": "Диалектика", "kind": "person", "description": "новое"},
+        headers=OWN_PAGE,
+    ).json()
+    assert restored["description"] == "новое"
+
+    preserved = client.put(
+        f"/api/tags/{created['id']}",
+        json={"name": "Логика"},
+        headers=OWN_PAGE,
+    ).json()
+    assert preserved["description"] == "новое"
+
+
+def test_empty_name_kind_and_alias_are_rejected_via_api(
+    library: Path, db: sqlite3.Connection
+) -> None:
+    client = _client(library, db)
+    tag = client.post(
+        "/api/tags",
+        json={"name": "Гегель", "kind": "topic"},
+        headers=OWN_PAGE,
+    ).json()
+
+    assert (
+        client.post(
+            "/api/tags", json={"name": "   ", "kind": "topic"}, headers=OWN_PAGE
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            "/api/tags", json={"name": "Новый", "kind": "   "}, headers=OWN_PAGE
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            f"/api/tags/{tag['id']}/aliases", json={"alias": "   "}, headers=OWN_PAGE
+        ).status_code
+        == 400
+    )
+
+
+def test_alias_matching_canonical_name_conflicts_via_api(
+    library: Path, db: sqlite3.Connection
+) -> None:
+    client = _client(library, db)
+    tag = client.post(
+        "/api/tags",
+        json={"name": "Диалектика", "kind": "topic"},
+        headers=OWN_PAGE,
+    ).json()
+
+    assert (
+        client.post(
+            f"/api/tags/{tag['id']}/aliases",
+            json={"alias": "диалектика"},
+            headers=OWN_PAGE,
+        ).status_code
+        == 409
+    )
+
+
 def test_tag_validation_errors_are_422(library: Path, db: sqlite3.Connection) -> None:
     client = _client(library, db)
     assert client.post("/api/tags", headers=OWN_PAGE).status_code == 422
@@ -242,3 +360,98 @@ def test_removing_tag_from_one_book_keeps_other_books(
     assert books[LOGIC] == []
     assert [tag["name"] for tag in books[DAO]] == ["Гегель"]
     assert client.get("/api/tags").json()[0]["count"] == 1
+
+
+def test_edit_and_tags_are_saved_atomically(library: Path, db: sqlite3.Connection) -> None:
+    client = _client(library, db)
+    tag = _make_tag(client, "Гегель")
+    client.post(
+        "/api/book",
+        json={
+            "key": LOGIC,
+            "title": "Мой заголовок",
+            "section": "Свой раздел",
+            "tags": ["Гегель"],
+        },
+        headers=OWN_PAGE,
+    )
+
+    response = client.post(
+        "/api/book",
+        json={
+            "key": LOGIC,
+            "title": "Новый заголовок",
+            "section": "Другой раздел",
+            "tags": ["Гегель", "Неизвестный"],
+        },
+        headers=OWN_PAGE,
+    )
+
+    assert response.status_code == 404
+    row = db.execute("SELECT title, section FROM overrides WHERE key = ?", (LOGIC,)).fetchone()
+    assert (row["title"], row["section"]) == ("Мой заголовок", "Свой раздел")
+    rows = db.execute(
+        "SELECT bt.tag_id, bt.source FROM book_tags bt WHERE bt.book_key = ? ORDER BY bt.tag_id",
+        (LOGIC,),
+    ).fetchall()
+    assert [(row["tag_id"], row["source"]) for row in rows] == [(tag["id"], "manual")]
+
+
+def test_edit_saves_fields_and_tags_in_one_request(library: Path, db: sqlite3.Connection) -> None:
+    client = _client(library, db)
+    tag = _make_tag(client, "Гегель")
+
+    response = client.post(
+        "/api/book",
+        json={
+            "key": DAO,
+            "title": "Мой заголовок",
+            "section": "Свой раздел",
+            "tags": ["Гегель"],
+        },
+        headers=OWN_PAGE,
+    )
+
+    assert response.json()["action"] == "saved"
+    row = db.execute("SELECT title, section FROM overrides WHERE key = ?", (DAO,)).fetchone()
+    assert (row["title"], row["section"]) == ("Мой заголовок", "Свой раздел")
+    rows = db.execute(
+        "SELECT tag_id, source FROM book_tags WHERE book_key = ? ORDER BY tag_id",
+        (DAO,),
+    ).fetchall()
+    assert [(row["tag_id"], row["source"]) for row in rows] == [(tag["id"], "manual")]
+
+
+def test_reset_clears_manual_overrides_and_keeps_auto_tags(
+    library: Path, db: sqlite3.Connection
+) -> None:
+    client = _client(library, db)
+    _make_tag(client, "Гегель")
+    auto = _make_tag(client, "Диалектика")
+    client.post(
+        "/api/book",
+        json={
+            "key": LOGIC,
+            "title": "Мой заголовок",
+            "section": "Свой раздел",
+            "tags": ["Гегель", "Диалектика"],
+        },
+        headers=OWN_PAGE,
+    )
+    db.execute("UPDATE book_tags SET source = 'auto' WHERE tag_id = ?", (auto["id"],))
+    db.commit()
+
+    response = client.post("/api/book", json={"key": LOGIC, "reset": True}, headers=OWN_PAGE)
+
+    assert response.json()["action"] == "reset"
+    assert (
+        db.execute("SELECT COUNT(*) AS n FROM overrides WHERE key = ?", (LOGIC,)).fetchone()[0] == 0
+    )
+    rows = db.execute(
+        "SELECT tag_id, source FROM book_tags WHERE book_key = ? ORDER BY tag_id",
+        (LOGIC,),
+    ).fetchall()
+    assert [(row["tag_id"], row["source"]) for row in rows] == [(auto["id"], "auto")]
+    book = next(item for item in client.get("/api/books").json()["books"] if item["key"] == LOGIC)
+    assert (book["title"], book["section"]) == ("Наука логики", "Новое")
+    assert [tag["name"] for tag in book["tags"]] == ["Диалектика"]

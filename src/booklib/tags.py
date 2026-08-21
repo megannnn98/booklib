@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from typing import cast
 
 KINDS = frozenset({"topic", "technology", "person", "period", "language", "form", "custom"})
+DESCRIPTION_UNSET = object()
 
 
 class TagError(Exception):
@@ -39,19 +41,22 @@ def normalize(value: str) -> str:
     return cleaned
 
 
-def normalize_optional(value: str | None, field: str) -> str | None:
-    if value is None:
-        return None
+def normalize_required(value: str, field: str) -> str:
     cleaned = value.strip()
     if not cleaned:
         raise TagInvalid(f"пустое значение: {field}")
     return cleaned
 
 
+def normalize_description(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
 def _validate_kind(kind: str) -> str:
-    cleaned = normalize_optional(kind, "kind")
-    if cleaned is None:
-        raise TagInvalid("пустое значение: kind")
+    cleaned = normalize_required(kind, "kind")
     if cleaned not in KINDS:
         raise TagInvalid(f"неизвестный kind: {kind}")
     return cleaned
@@ -135,7 +140,7 @@ def create_tag(
 ) -> dict:
     name = normalize(name)
     kind = _validate_kind(kind)
-    description = normalize_optional(description, "description")
+    description = normalize_description(description)
     _begin_immediate(conn)
     try:
         _ensure_name_alias_free(conn, None, name)
@@ -158,7 +163,7 @@ def update_tag(
     tag_id: int,
     name: str | None,
     kind: str | None,
-    description: str | None,
+    description: str | None | object = DESCRIPTION_UNSET,
 ) -> dict:
     _begin_immediate(conn)
     try:
@@ -167,17 +172,15 @@ def update_tag(
             raise TagNotFound(f"нет такого тега: {tag_id}")
         new_name = normalize(name) if name is not None else tag["name"]
         new_kind = _validate_kind(kind) if kind is not None else tag["kind"]
-        new_description = (
-            normalize_optional(description, "description")
-            if description is not None
-            else tag["description"]
-        )
+        new_description = tag["description"]
+        if description is not DESCRIPTION_UNSET:
+            new_description = normalize_description(cast(str | None, description))
         _ensure_name_alias_free(conn, tag_id, new_name)
         if new_name != tag["name"] and _tag_by_name(conn, new_name) is not None:
             raise TagConflict("тег с таким именем уже существует")
         conn.execute(
             "UPDATE tags SET name = ?, kind = ?, description = ? WHERE id = ?",
-            (new_name, new_kind, new_description or None, tag_id),
+            (new_name, new_kind, new_description, tag_id),
         )
         conn.commit()
         return _tag_payload(conn, tag_id)
@@ -187,12 +190,14 @@ def update_tag(
 
 
 def add_alias(conn: sqlite3.Connection, tag_id: int, alias: str) -> dict:
-    alias = normalize(alias)
+    alias = normalize_required(alias, "alias")
     _begin_immediate(conn)
     try:
         tag = _tag_row(conn, tag_id)
         if tag is None:
             raise TagNotFound(f"нет такого тега: {tag_id}")
+        if alias.casefold() == tag["name"].casefold():
+            raise TagConflict("алиас совпадает с именем тега")
         _ensure_alias_name_free(conn, tag_id, alias)
         if _tag_by_alias(conn, alias) is not None:
             raise TagConflict("алиас уже занят")
@@ -205,7 +210,7 @@ def add_alias(conn: sqlite3.Connection, tag_id: int, alias: str) -> dict:
 
 
 def remove_alias(conn: sqlite3.Connection, tag_id: int, alias: str) -> dict:
-    alias = normalize(alias)
+    alias = normalize_required(alias, "alias")
     _begin_immediate(conn)
     try:
         deleted = conn.execute(
@@ -326,7 +331,7 @@ def resolve(conn: sqlite3.Connection, names: list[str]) -> list[int]:
     ids: list[int] = []
     seen: set[int] = set()
     for name in names:
-        cleaned = normalize(name)
+        cleaned = normalize_required(name, "tag")
         row = _tag_by_name(conn, cleaned)
         if row is None:
             row = _tag_by_alias(conn, cleaned)
@@ -339,24 +344,29 @@ def resolve(conn: sqlite3.Connection, names: list[str]) -> list[int]:
     return ids
 
 
+def _replace_book_tags(conn: sqlite3.Connection, key: str, names: list[str]) -> dict:
+    book = conn.execute("SELECT 1 FROM books WHERE key = ?", (key,)).fetchone()
+    if book is None:
+        raise TagNotFound(f"нет такой карточки: {key}")
+    ids = resolve(conn, names)
+    conn.execute(
+        "DELETE FROM book_tags WHERE book_key = ? AND source = 'manual'",
+        (key,),
+    )
+    for tag_id in ids:
+        conn.execute(
+            "INSERT OR IGNORE INTO book_tags(book_key, tag_id, source) VALUES(?,?, 'manual')",
+            (key, tag_id),
+        )
+    return {"key": key, "tags": ids}
+
+
 def set_book_tags(conn: sqlite3.Connection, key: str, names: list[str]) -> dict:
     _begin_immediate(conn)
     try:
-        book = conn.execute("SELECT 1 FROM books WHERE key = ?", (key,)).fetchone()
-        if book is None:
-            raise TagNotFound(f"нет такой карточки: {key}")
-        ids = resolve(conn, names)
-        conn.execute(
-            "DELETE FROM book_tags WHERE book_key = ? AND source = 'manual'",
-            (key,),
-        )
-        for tag_id in ids:
-            conn.execute(
-                "INSERT OR IGNORE INTO book_tags(book_key, tag_id, source) VALUES(?,?, 'manual')",
-                (key, tag_id),
-            )
+        result = _replace_book_tags(conn, key, names)
         conn.commit()
-        return {"key": key, "tags": ids}
+        return result
     except Exception:
         conn.rollback()
         raise

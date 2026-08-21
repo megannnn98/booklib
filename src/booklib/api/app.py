@@ -85,6 +85,7 @@ class EditRequest(BaseModel):
     title: str | None = None
     author: str | None = None
     section: str | None = None
+    tags: list[str] | None = None
     reset: bool = False
 
 
@@ -152,6 +153,13 @@ def require_local(request: Request) -> None:
         raise HTTPException(
             status_code=403, detail="привилегированная ручка доступна только с самого компьютера"
         )
+
+
+def _clean_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
 
 
 # Все ручки, которые что-то меняют или запускают процессы, живут в одном роутере
@@ -469,10 +477,11 @@ def api_edit(request: EditRequest) -> dict:
         if base is None:
             raise HTTPException(status_code=404, detail=f"нет такой карточки: {request.key}")
 
-        def clean(value: str | None) -> str | None:
-            return value.strip() or None if value is not None else None
-
-        title, author, section = clean(request.title), clean(request.author), clean(request.section)
+        title, author, section = (
+            _clean_text(request.title),
+            _clean_text(request.author),
+            _clean_text(request.section),
+        )
 
         # Форма присылает все три поля, даже если пользователь менял одно. Значение,
         # совпадающее с базовым, в overrides не пишем: иначе оно скопирует туда данные
@@ -482,19 +491,37 @@ def api_edit(request: EditRequest) -> dict:
         author = author if author != base["author"] else None
         section = section if section != base["section"] else None
 
-        if request.reset or not any((title, author, section)):
-            conn.execute("DELETE FROM overrides WHERE key = ?", (request.key,))
-            action = "reset"
-        else:
-            conn.execute(
-                "INSERT INTO overrides(key, title, author, section, updated_at) "
-                "VALUES(?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET "
-                "title=excluded.title, author=excluded.author, section=excluded.section, "
-                "updated_at=excluded.updated_at",
-                (request.key, title, author, section, time.time()),
-            )
-            action = "saved"
-        conn.commit()
+        has_field_changes = any((title, author, section))
+
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if request.reset:
+                conn.execute("DELETE FROM overrides WHERE key = ?", (request.key,))
+                tags._replace_book_tags(conn, request.key, [])
+                action = "reset"
+            else:
+                if has_field_changes:
+                    conn.execute(
+                        "INSERT INTO overrides(key, title, author, section, updated_at) "
+                        "VALUES(?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET "
+                        "title=excluded.title, author=excluded.author, section=excluded.section, "
+                        "updated_at=excluded.updated_at",
+                        (request.key, title, author, section, time.time()),
+                    )
+                elif request.tags is None:
+                    conn.execute("DELETE FROM overrides WHERE key = ?", (request.key,))
+
+                if request.tags is not None:
+                    tags._replace_book_tags(conn, request.key, request.tags)
+                    action = "saved"
+                elif has_field_changes:
+                    action = "saved"
+                else:
+                    action = "reset"
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
     return {"action": action, "key": request.key}
 
 
@@ -507,7 +534,12 @@ def api_create_tag(request: TagCreateRequest) -> dict:
 @priv_routes.put("/api/tags/{tag_id}")
 def api_update_tag(tag_id: int, request: TagUpdateRequest) -> dict:
     with closing(connect()) as conn:
-        return tags.update_tag(conn, tag_id, request.name, request.kind, request.description)
+        description = (
+            request.description
+            if "description" in request.model_fields_set
+            else tags.DESCRIPTION_UNSET
+        )
+        return tags.update_tag(conn, tag_id, request.name, request.kind, description)
 
 
 @priv_routes.post("/api/tags/{tag_id}/aliases")
