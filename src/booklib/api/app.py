@@ -18,9 +18,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from booklib import covers, opener, tags
+from booklib import covers, opener, preferences, sync, tags
 from booklib.config.settings import field_source, get_settings
 from booklib.db import connect, init_state
 from booklib.errors import LibraryUnavailable
@@ -121,6 +121,30 @@ class BookTagsRequest(BaseModel):
     tags: list[str]
 
 
+class PreferencesRequest(BaseModel):
+    sort: str | None = None
+    section: str | None = None
+    tags: list[str] | None = None
+
+
+class LegacyTagRequest(BaseModel):
+    name: str
+    kind: str = "custom"
+    description: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+
+
+class LegacyBookRequest(BaseModel):
+    key: str
+    tags: list[str]
+
+
+class LegacyStateRequest(BaseModel):
+    preferences: PreferencesRequest | None = None
+    tags: list[LegacyTagRequest] = Field(default_factory=list)
+    books: list[LegacyBookRequest] = Field(default_factory=list)
+
+
 def require_own_page(x_booklib: str | None = Header(default=None)) -> None:
     """Пускать только запросы со своей страницы.
 
@@ -162,9 +186,16 @@ def _clean_text(value: str | None) -> str | None:
     return cleaned or None
 
 
-# Все ручки, которые что-то меняют или запускают процессы, живут в одном роутере
-# с зависимостью require_local (+ require_own_page): новая мутирующая ручка,
-# добавленная сюда, не может «забыть» проверку роли — она на роутере целиком.
+# Общие данные (теги, связи, пользовательские preferences) доступны с любого
+# клиента, но по-прежнему требуют X-Booklib: чужая вкладка не может мутировать
+# состояние без нашего собственного fetch-запроса.
+shared_routes = APIRouter(
+    dependencies=[Depends(require_own_page)],
+    tags=["shared"],
+)
+
+# Всё, что запускает процессы или меняет machine-local состояние, остаётся
+# только на петле. Это защищает /api/open и смену корня от удалённых клиентов.
 priv_routes = APIRouter(
     dependencies=[Depends(require_own_page), Depends(require_local)],
     tags=["privileged"],
@@ -398,6 +429,35 @@ def api_rescan() -> JSONResponse:
     return JSONResponse(rescan())
 
 
+@shared_routes.get("/api/preferences")
+def api_preferences() -> dict:
+    with closing(connect()) as conn:
+        return preferences.load_preferences(conn)
+
+
+@shared_routes.put("/api/preferences")
+def api_update_preferences(request: PreferencesRequest) -> dict:
+    sort: str | None = None
+    section: str | None = None
+    selected_tags: list[str] | None = None
+    if "sort" in request.model_fields_set:
+        sort = _clean_text(request.sort)
+        if sort is not None and sort not in SORTS:
+            raise HTTPException(status_code=400, detail=f"неизвестная сортировка: {sort}")
+    if "section" in request.model_fields_set:
+        section = _clean_text(request.section)
+    if "tags" in request.model_fields_set:
+        selected_tags = request.tags or []
+    with closing(connect()) as conn:
+        return preferences.update_preferences(conn, sort=sort, section=section, tags=selected_tags)
+
+
+@shared_routes.post("/api/import")
+def api_import_legacy_state(request: LegacyStateRequest) -> dict:
+    with closing(connect()) as conn:
+        return sync.import_legacy_state(conn, request.model_dump())
+
+
 @priv_routes.get("/api/settings")
 def api_settings() -> dict:
     """Активные настройки + read-only справка. Смена корня — через POST."""
@@ -458,7 +518,7 @@ def api_open(request: OpenRequest) -> dict:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@priv_routes.post("/api/book")
+@shared_routes.post("/api/book")
 def api_edit(request: EditRequest) -> dict:
     """Сохранить правку в overrides.
 
@@ -525,13 +585,13 @@ def api_edit(request: EditRequest) -> dict:
     return {"action": action, "key": request.key}
 
 
-@priv_routes.post("/api/tags")
+@shared_routes.post("/api/tags")
 def api_create_tag(request: TagCreateRequest) -> dict:
     with closing(connect()) as conn:
         return tags.create_tag(conn, request.name, request.kind, request.description)
 
 
-@priv_routes.put("/api/tags/{tag_id}")
+@shared_routes.put("/api/tags/{tag_id}")
 def api_update_tag(tag_id: int, request: TagUpdateRequest) -> dict:
     with closing(connect()) as conn:
         description = (
@@ -542,31 +602,31 @@ def api_update_tag(tag_id: int, request: TagUpdateRequest) -> dict:
         return tags.update_tag(conn, tag_id, request.name, request.kind, description)
 
 
-@priv_routes.post("/api/tags/{tag_id}/aliases")
+@shared_routes.post("/api/tags/{tag_id}/aliases")
 def api_add_alias(tag_id: int, request: AliasRequest) -> dict:
     with closing(connect()) as conn:
         return tags.add_alias(conn, tag_id, request.alias)
 
 
-@priv_routes.delete("/api/tags/{tag_id}/aliases")
+@shared_routes.delete("/api/tags/{tag_id}/aliases")
 def api_remove_alias(tag_id: int, alias: str) -> dict:
     with closing(connect()) as conn:
         return tags.remove_alias(conn, tag_id, alias)
 
 
-@priv_routes.delete("/api/tags/{tag_id}")
+@shared_routes.delete("/api/tags/{tag_id}")
 def api_delete_tag(tag_id: int) -> dict:
     with closing(connect()) as conn:
         return tags.delete_tag(conn, tag_id)
 
 
-@priv_routes.post("/api/tags/merge")
+@shared_routes.post("/api/tags/merge")
 def api_merge_tags(request: MergeRequest) -> dict:
     with closing(connect()) as conn:
         return tags.merge_tags(conn, request.source, request.target)
 
 
-@priv_routes.put("/api/book/{key:path}/tags")
+@shared_routes.put("/api/book/{key:path}/tags")
 def api_set_book_tags(key: str, request: BookTagsRequest) -> dict:
     with closing(connect()) as conn:
         return tags.set_book_tags(conn, key, request.tags)
@@ -577,5 +637,6 @@ def index() -> FileResponse:
     return FileResponse(get_settings().static_dir / "index.html")
 
 
+app.include_router(shared_routes)
 app.include_router(priv_routes)
 app.mount("/static", StaticFiles(directory=get_settings().static_dir), name="static")

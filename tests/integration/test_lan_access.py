@@ -45,11 +45,6 @@ def test_remote_is_blocked_from_privileged_routes(library: Path) -> None:
         ("post", "/api/settings", {"root": str(library)}),
         ("post", "/api/rescan", None),
         ("post", "/api/open", {"key": "x"}),
-        ("post", "/api/book", {"key": "x", "title": "y"}),
-        ("post", "/api/tags", {"name": "t"}),
-        ("put", "/api/tags/1", {"name": "t"}),
-        ("post", "/api/tags/merge", {"source": 1, "target": 2}),
-        ("put", "/api/book/a/tags", {"tags": ["t"]}),
     ]:
         resp = (
             remote.get(path, params=body, headers=OWN_PAGE)
@@ -74,8 +69,16 @@ def test_local_without_header_is_403(library: Path) -> None:
     assert local.post("/api/tags", json={"name": "t"}).status_code == 403
 
 
-def test_remote_can_read_tags(library: Path) -> None:
-    assert remote_client().get("/api/tags").status_code == 200
+def test_remote_can_read_and_mutate_shared_tags(library: Path, db: sqlite3.Connection) -> None:
+    make_book(library, "a.pdf")
+    sync(db, collect_groups())
+    db.commit()
+
+    remote = remote_client()
+    created = remote.post("/api/tags", json={"name": "t"}, headers=OWN_PAGE)
+    assert created.status_code == 200
+    assert remote.put("/api/book/a/tags", json={"tags": ["t"]}, headers=OWN_PAGE).status_code == 200
+    assert remote.get("/api/tags").status_code == 200
 
 
 # ---------- роль в /api/status ----------

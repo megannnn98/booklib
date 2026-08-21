@@ -108,6 +108,89 @@ function postJson(path, payload) {
   });
 }
 
+function safeParseJSON(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeLegacyTag(entry) {
+  const aliases = Array.isArray(entry.aliases)
+    ? entry.aliases.filter((alias) => typeof alias === "string" && alias.trim())
+    : [];
+  return {
+    name: String(entry.name || "").trim(),
+    kind: typeof entry.kind === "string" && entry.kind.trim() ? entry.kind.trim() : "custom",
+    description: typeof entry.description === "string" ? entry.description : null,
+    aliases,
+  };
+}
+
+function collectLegacyPayload() {
+  if (!window.localStorage) return null;
+  const payload = { preferences: {}, tags: [], books: [] };
+  const keys = [];
+  for (let i = 0; i < window.localStorage.length; i += 1) {
+    const key = window.localStorage.key(i);
+    if (!key) continue;
+    const lower = key.toLowerCase();
+    const looksRelevant = lower.startsWith("booklib")
+      || ["tags", "settings", "preferences", "book_tags", "booktags"].includes(lower);
+    if (!looksRelevant) continue;
+    const raw = window.localStorage.getItem(key);
+    if (raw == null) continue;
+    keys.push(key);
+    const value = safeParseJSON(raw);
+    if (value == null) continue;
+    if (typeof value === "string") {
+      if (lower.includes("sort")) payload.preferences.sort = value;
+      else if (lower.includes("section")) payload.preferences.section = value;
+      continue;
+    }
+    if (Array.isArray(value)) {
+      if (value.every((item) => typeof item === "string")) {
+        if (lower.includes("tag")) payload.preferences.tags = value;
+        continue;
+      }
+      if (value.every((item) => item && typeof item === "object" && typeof item.name === "string")) {
+        payload.tags.push(...value.map(normalizeLegacyTag).filter((tag) => tag.name));
+      }
+      continue;
+    }
+    if (typeof value === "object") {
+      if (typeof value.sort === "string") payload.preferences.sort = value.sort;
+      if (typeof value.section === "string") payload.preferences.section = value.section;
+      if (Array.isArray(value.tags) && value.tags.every((item) => typeof item === "string")) {
+        if (typeof value.key === "string" || typeof value.bookKey === "string") {
+          payload.books.push({ key: value.key || value.bookKey, tags: value.tags });
+        } else if (lower.includes("tag")) {
+          payload.preferences.tags = value.tags;
+        }
+      }
+      if (typeof value.name === "string") {
+        payload.tags.push(normalizeLegacyTag(value));
+      }
+    }
+  }
+  const hasPayload = Object.keys(payload.preferences).length || payload.tags.length || payload.books.length;
+  return hasPayload ? { keys, payload } : null;
+}
+
+async function migrateLegacyState() {
+  const legacy = collectLegacyPayload();
+  if (!legacy) return;
+  try {
+    await postJson("/api/import", legacy.payload);
+    for (const key of legacy.keys) {
+      window.localStorage.removeItem(key);
+    }
+  } catch (error) {
+    toast(`Не удалось перенести старые данные: ${error.message}`, true);
+  }
+}
+
 function plural(n, one, few, many) {
   const mod10 = n % 10;
   const mod100 = n % 100;
@@ -118,6 +201,45 @@ function plural(n, one, few, many) {
 
 function normalizeTagName(value) {
   return value.trim();
+}
+
+async function savePreferences() {
+  try {
+    await api("/api/preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sort: state.sort,
+        section: state.section,
+        tags: state.tags,
+      }),
+    });
+  } catch (error) {
+    toast(`Не удалось сохранить настройки: ${error.message}`, true);
+  }
+}
+
+async function loadPreferences() {
+  const data = await api("/api/preferences");
+  if (typeof data.sort === "string" && data.sort) {
+    state.sort = data.sort;
+  }
+  if (typeof data.section === "string" && data.section) {
+    state.section = data.section;
+  }
+  if (Array.isArray(data.tags)) {
+    state.tags = data.tags.filter((tag) => typeof tag === "string" && tag.trim());
+  }
+  el.sort.value = state.sort;
+}
+
+function syncFilterSelection() {
+  const known = new Set(state.availableTags.map((tag) => tag.name));
+  const next = state.tags.filter((name) => known.has(name));
+  if (next.length !== state.tags.length) {
+    state.tags = next;
+    void savePreferences();
+  }
 }
 
 function currentTagNames() {
@@ -170,6 +292,7 @@ function renderTagBar() {
     chip.onclick = () => {
       state.tags = state.tags.filter((name) => name !== tag.name);
       renderTagBar();
+      void savePreferences();
       loadBooks();
     };
     return chip;
@@ -181,6 +304,7 @@ function renderTagBar() {
   reset.onclick = () => {
     state.tags = [];
     renderTagBar();
+    void savePreferences();
     loadBooks();
   };
   el.tagbar.replaceChildren(...chips, reset);
@@ -206,6 +330,7 @@ function renderFilterList() {
         state.tags = state.tags.filter((name) => name !== tag.name);
       }
       renderTagBar();
+      void savePreferences();
       loadBooks();
     };
     const text = document.createElement("span");
@@ -264,6 +389,7 @@ async function loadTags() {
   state.availableTags = await api("/api/tags");
   el.tagsList.replaceChildren(...state.availableTags.map((tag) =>
     Object.assign(document.createElement("option"), { value: tag.name })));
+  syncFilterSelection();
   renderTagBar();
   renderFilterList();
   renderAdminList();
@@ -304,6 +430,7 @@ async function loadSections() {
       [...el.sections.children].forEach((node) => node.classList.remove("active"));
       button.classList.add("active");
       document.body.classList.remove("nav-open");  // мобильно: раздел выбран — панель закрыть
+      void savePreferences();
       loadBooks();
     };
     return button;
@@ -366,6 +493,7 @@ function cardNode(book) {
     renderTagChips(tagsBox, visible, null, (tag) => {
       state.tags = [tag.name];
       renderTagBar();
+      void savePreferences();
       loadBooks();
     });
     if (book.tags.length > 3) {
@@ -589,6 +717,7 @@ el.search.addEventListener("input", () => {
 
 el.sort.addEventListener("change", () => {
   state.sort = el.sort.value;
+  void savePreferences();
   loadBooks();
 });
 
@@ -607,6 +736,7 @@ el.tfSearch.addEventListener("input", renderFilterList);
 el.tfClear.addEventListener("click", () => {
   state.tags = [];
   renderTagBar();
+  void savePreferences();
   loadBooks();
 });
 el.tfClose.addEventListener("click", () => el.tagfilter.close());
@@ -703,7 +833,10 @@ el.rescan.addEventListener("click", async () => {
 
 (async function start() {
   try {
-    await Promise.all([loadStatus(), loadTags(), loadSections(), loadBooks()]);
+    await migrateLegacyState();
+    await loadPreferences();
+    await Promise.all([loadStatus(), loadTags(), loadSections()]);
+    await loadBooks();
   } catch (error) {
     toast(`Не удалось загрузить каталог: ${error.message}`, true);
   }

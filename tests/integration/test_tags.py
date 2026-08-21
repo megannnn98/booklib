@@ -229,16 +229,21 @@ def test_book_tags_route_supports_slashes_in_key(library: Path, db: sqlite3.Conn
     assert client.get("/api/books").json()["books"][0]["tags"][0]["name"] == "Даосизм"
 
 
-def test_remote_cannot_mutate_tags(library: Path, db: sqlite3.Connection) -> None:
+def test_remote_can_mutate_shared_tags(library: Path, db: sqlite3.Connection) -> None:
+    make_book(library, "philosophy/Эвола - Даосизм - 2020.pdf")
+    sync(db, collect_groups())
+    apply_sections(db)
+    db.commit()
+
     remote = TestClient(app, client=("192.168.0.50", 50000))
-    assert remote.post("/api/tags", json={"name": "x"}, headers=OWN_PAGE).status_code == 403
+    assert remote.post("/api/tags", json={"name": "x"}, headers=OWN_PAGE).status_code == 200
     assert (
         remote.put(
             "/api/book/philosophy/Эвола - Даосизм - 2020/tags",
             json={"tags": ["x"]},
             headers=OWN_PAGE,
         ).status_code
-        == 403
+        == 200
     )
 
 

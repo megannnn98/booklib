@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from contextlib import suppress
 from typing import cast
 
 KINDS = frozenset({"topic", "technology", "person", "period", "language", "form", "custom"})
@@ -98,6 +99,21 @@ def _ensure_alias_name_free(conn: sqlite3.Connection, tag_id: int, alias: str) -
     ).fetchone()
     if row is not None:
         raise TagConflict("алиас занят именем другого тега")
+
+
+def _insert_alias(conn: sqlite3.Connection, tag_id: int, alias: str) -> None:
+    alias = normalize_required(alias, "alias")
+    tag = _tag_row(conn, tag_id)
+    if tag is None:
+        raise TagNotFound(f"нет такого тега: {tag_id}")
+    if alias.casefold() == tag["name"].casefold():
+        raise TagConflict("алиас совпадает с именем тега")
+    if _tag_by_name(conn, alias) is not None:
+        raise TagConflict("алиас занят именем другого тега")
+    _ensure_name_alias_free(conn, tag_id, alias)
+    if _tag_by_alias(conn, alias) is not None:
+        raise TagConflict("алиас уже занят")
+    conn.execute("INSERT INTO tag_aliases(tag_id, alias) VALUES(?,?)", (tag_id, alias))
 
 
 def _tag_payload(conn: sqlite3.Connection, tag_id: int) -> dict:
@@ -201,18 +217,67 @@ def update_tag(
 
 
 def add_alias(conn: sqlite3.Connection, tag_id: int, alias: str) -> dict:
-    alias = normalize_required(alias, "alias")
     _begin_immediate(conn)
     try:
-        tag = _tag_row(conn, tag_id)
+        _insert_alias(conn, tag_id, alias)
+        conn.commit()
+        return _tag_payload(conn, tag_id)
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def upsert_tag(
+    conn: sqlite3.Connection,
+    name: str,
+    kind: str = "custom",
+    description: str | None = None,
+    aliases: list[str] | None = None,
+) -> dict:
+    """Создать тег или аккуратно дополнить уже существующий.
+
+    Используется для миграции legacy-состояния: существующий серверный тег
+    не перетирается безусловно, но отсутствующие поля и алиасы можно добавить.
+    """
+    name = normalize(name)
+    kind = _validate_kind(kind)
+    description = normalize_description(description)
+    aliases = aliases or []
+    _begin_immediate(conn)
+    try:
+        tag = _tag_by_name(conn, name)
+        matched_alias = False
         if tag is None:
-            raise TagNotFound(f"нет такого тега: {tag_id}")
-        if alias.casefold() == tag["name"].casefold():
-            raise TagConflict("алиас совпадает с именем тега")
-        _ensure_alias_name_free(conn, tag_id, alias)
-        if _tag_by_alias(conn, alias) is not None:
-            raise TagConflict("алиас уже занят")
-        conn.execute("INSERT INTO tag_aliases(tag_id, alias) VALUES(?,?)", (tag_id, alias))
+            tag = _tag_by_alias(conn, name)
+            matched_alias = tag is not None
+        if tag is None:
+            conn.execute(
+                "INSERT INTO tags(name, kind, description, created_at) VALUES(?,?,?,?)",
+                (name, kind, description, time.time()),
+            )
+            tag_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+            tag = _tag_row(conn, tag_id)
+        else:
+            tag_id = tag["id"]
+            new_kind = tag["kind"]
+            new_description = tag["description"]
+            if tag["kind"] == "custom" and kind != "custom":
+                new_kind = kind
+            if new_description is None and description is not None:
+                new_description = description
+            if new_kind != tag["kind"] or new_description != tag["description"]:
+                conn.execute(
+                    "UPDATE tags SET kind = ?, description = ? WHERE id = ?",
+                    (new_kind, new_description, tag_id),
+                )
+        import_aliases = [
+            alias for alias in aliases if alias and alias.casefold() != name.casefold()
+        ]
+        if matched_alias and tag is not None and name.casefold() != tag["name"].casefold():
+            import_aliases = [name, *import_aliases]
+        for alias in import_aliases:
+            with suppress(TagConflict):
+                _insert_alias(conn, tag_id, alias)
         conn.commit()
         return _tag_payload(conn, tag_id)
     except Exception:
@@ -386,6 +451,29 @@ def set_book_tags(conn: sqlite3.Connection, key: str, names: list[str]) -> dict:
     except Exception:
         conn.rollback()
         raise
+
+
+def manual_tag_names_for(conn: sqlite3.Connection, key: str) -> list[str]:
+    rows = conn.execute(
+        "SELECT t.name FROM book_tags bt JOIN tags t ON t.id = bt.tag_id "
+        "WHERE bt.book_key = ? AND bt.source = 'manual' "
+        "ORDER BY t.name COLLATE unicode_ci",
+        (key,),
+    ).fetchall()
+    return [row["name"] for row in rows]
+
+
+def merge_book_tags(conn: sqlite3.Connection, key: str, names: list[str]) -> dict:
+    seen: set[str] = set()
+    merged: list[str] = []
+    for name in [*manual_tag_names_for(conn, key), *names]:
+        cleaned = normalize_required(name, "tag")
+        marker = cleaned.casefold()
+        if marker in seen:
+            continue
+        seen.add(marker)
+        merged.append(cleaned)
+    return set_book_tags(conn, key, merged)
 
 
 def tags_for(conn: sqlite3.Connection, keys: list[str]) -> dict[str, list[dict]]:
