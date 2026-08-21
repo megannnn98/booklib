@@ -97,6 +97,31 @@ class SettingsRequest(BaseModel):
     scan_on_start: bool | None = None
 
 
+class TagCreateRequest(BaseModel):
+    name: str
+    kind: str = "custom"
+    description: str | None = None
+
+
+class TagUpdateRequest(BaseModel):
+    name: str | None = None
+    kind: str | None = None
+    description: str | None = None
+
+
+class AliasRequest(BaseModel):
+    alias: str
+
+
+class MergeRequest(BaseModel):
+    source: int
+    target: int
+
+
+class BookTagsRequest(BaseModel):
+    tags: list[str]
+
+
 def require_own_page(x_booklib: str | None = Header(default=None)) -> None:
     """Пускать только запросы со своей страницы.
 
@@ -198,8 +223,6 @@ def api_books(
     order = SORTS.get(sort, SORTS["title"])
     where = ["b.missing = 0"]
     params: list = []
-    tag_ids: list[int] = []
-
     if section and section != "*":
         where.append("COALESCE(o.section, b.section) = ?")
         params.append(section)
@@ -477,29 +500,21 @@ def api_edit(request: EditRequest) -> dict:
 
 
 @priv_routes.post("/api/tags")
-def api_create_tag(request: dict) -> dict:
+def api_create_tag(request: TagCreateRequest) -> dict:
     with closing(connect()) as conn:
-        return tags.create_tag(
-            conn, request["name"], request.get("kind", "custom"), request.get("description")
-        )
+        return tags.create_tag(conn, request.name, request.kind, request.description)
 
 
 @priv_routes.put("/api/tags/{tag_id}")
-def api_update_tag(tag_id: int, request: dict) -> dict:
+def api_update_tag(tag_id: int, request: TagUpdateRequest) -> dict:
     with closing(connect()) as conn:
-        return tags.update_tag(
-            conn,
-            tag_id,
-            request.get("name"),
-            request.get("kind"),
-            request.get("description"),
-        )
+        return tags.update_tag(conn, tag_id, request.name, request.kind, request.description)
 
 
 @priv_routes.post("/api/tags/{tag_id}/aliases")
-def api_add_alias(tag_id: int, request: dict) -> dict:
+def api_add_alias(tag_id: int, request: AliasRequest) -> dict:
     with closing(connect()) as conn:
-        return tags.add_alias(conn, tag_id, request["alias"])
+        return tags.add_alias(conn, tag_id, request.alias)
 
 
 @priv_routes.delete("/api/tags/{tag_id}/aliases")
@@ -515,15 +530,15 @@ def api_delete_tag(tag_id: int) -> dict:
 
 
 @priv_routes.post("/api/tags/merge")
-def api_merge_tags(request: dict) -> dict:
+def api_merge_tags(request: MergeRequest) -> dict:
     with closing(connect()) as conn:
-        return tags.merge_tags(conn, request["source"], request["target"])
+        return tags.merge_tags(conn, request.source, request.target)
 
 
 @priv_routes.put("/api/book/{key:path}/tags")
-def api_set_book_tags(key: str, request: dict) -> dict:
+def api_set_book_tags(key: str, request: BookTagsRequest) -> dict:
     with closing(connect()) as conn:
-        return tags.set_book_tags(conn, key, request["tags"])
+        return tags.set_book_tags(conn, key, request.tags)
 
 
 @app.get("/")

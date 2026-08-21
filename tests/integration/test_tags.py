@@ -63,6 +63,16 @@ def test_public_tags_and_book_tags(library: Path, db: sqlite3.Connection) -> Non
     assert search["total"] == 1
 
 
+def test_tag_validation_errors_are_422(library: Path, db: sqlite3.Connection) -> None:
+    client = _client(library, db)
+    assert client.post("/api/tags", headers=OWN_PAGE).status_code == 422
+    assert (
+        client.put("/api/book/philosophy/Эвола - Даосизм - 2020/tags", headers=OWN_PAGE).status_code
+        == 422
+    )
+    assert client.post("/api/tags/merge", headers=OWN_PAGE).status_code == 422
+
+
 def test_tag_filter_rejects_unknown_name(library: Path, db: sqlite3.Connection) -> None:
     client = _client(library, db)
     response = client.get("/api/books", params=[("tag", "неизвестный")])
@@ -80,3 +90,16 @@ def test_book_tags_route_supports_slashes_in_key(library: Path, db: sqlite3.Conn
     )
     assert response.status_code == 200
     assert client.get("/api/books").json()["books"][0]["tags"][0]["name"] == "Даосизм"
+
+
+def test_remote_cannot_mutate_tags(library: Path, db: sqlite3.Connection) -> None:
+    remote = TestClient(app, client=("192.168.0.50", 50000))
+    assert remote.post("/api/tags", json={"name": "x"}, headers=OWN_PAGE).status_code == 403
+    assert (
+        remote.put(
+            "/api/book/philosophy/Эвола - Даосизм - 2020/tags",
+            json={"tags": ["x"]},
+            headers=OWN_PAGE,
+        ).status_code
+        == 403
+    )

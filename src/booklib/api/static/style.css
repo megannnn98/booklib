@@ -326,6 +326,8 @@ header { display: flex; gap: 10px; margin-bottom: 12px; }
   flex-direction: column;
   gap: 6px;
   margin: 12px 0;
+  max-height: 42vh;
+  overflow-y: auto;
 }
 
 .check-row {

@@ -108,7 +108,17 @@
     <input id="ta-search" type="search" placeholder="поиск" autocomplete="off">
     <div id="ta-list"></div>
     <label>Название<input id="ta-name" autocomplete="off"></label>
-    <label>Тип<input id="ta-kind" autocomplete="off"></label>
+    <label>Тип
+      <select id="ta-kind">
+        <option value="topic">topic</option>
+        <option value="technology">technology</option>
+        <option value="person">person</option>
+        <option value="period">period</option>
+        <option value="language">language</option>
+        <option value="form">form</option>
+        <option value="custom">custom</option>
+      </select>
+    </label>
     <label>Описание<textarea id="ta-description" rows="3"></textarea></label>
     <label>Алиас<input id="ta-alias" autocomplete="off"></label>
     <label>Цель объединения<input id="ta-merge-target" autocomplete="off"></label>

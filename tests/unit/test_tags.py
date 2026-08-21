@@ -21,6 +21,7 @@ from booklib.tags import (
     resolve,
     set_book_tags,
     tags_for,
+    update_tag,
 )
 
 
@@ -53,6 +54,44 @@ def test_name_and_alias_conflict_cross_tables(tmp_path: Path) -> None:
         add_alias(conn, left["id"], "диалектика")
 
 
+def test_empty_alias_is_rejected(tmp_path: Path) -> None:
+    conn = connect_at(tmp_path / "tags.db")
+    tag = create_tag(conn, "Гегель", "topic", None)
+    with pytest.raises(TagInvalid):
+        add_alias(conn, tag["id"], "   ")
+
+
+def test_aliases_are_case_insensitively_unique(tmp_path: Path) -> None:
+    conn = connect_at(tmp_path / "tags.db")
+    left = create_tag(conn, "Гегель", "topic", None)
+    right = create_tag(conn, "Диалектика", "topic", None)
+    add_alias(conn, left["id"], "немецкий идеализм")
+
+    with pytest.raises(TagConflict):
+        add_alias(conn, right["id"], "НЕМЕЦКИЙ ИДЕАЛИЗМ")
+
+
+def test_update_tag_changes_name_kind_and_description(tmp_path: Path) -> None:
+    conn = connect_at(tmp_path / "tags.db")
+    tag = create_tag(conn, "Гегель", "topic", "old")
+
+    updated = update_tag(conn, tag["id"], "Диалектика", "person", "new")
+
+    assert updated["name"] == "Диалектика"
+    assert updated["kind"] == "person"
+    assert updated["description"] == "new"
+
+
+def test_update_tag_rejects_alias_conflict(tmp_path: Path) -> None:
+    conn = connect_at(tmp_path / "tags.db")
+    left = create_tag(conn, "Гегель", "topic", None)
+    right = create_tag(conn, "Диалектика", "topic", None)
+    add_alias(conn, right["id"], "немецкий идеализм")
+
+    with pytest.raises(TagConflict):
+        update_tag(conn, left["id"], "немецкий идеализм", None, None)
+
+
 def test_resolve_accepts_alias(tmp_path: Path) -> None:
     conn = connect_at(tmp_path / "tags.db")
     tag = create_tag(conn, "Гегель", "topic", None)
@@ -66,75 +105,79 @@ def test_merge_moves_book_links_and_aliases(tmp_path: Path) -> None:
     source = create_tag(conn, "Гегель", "topic", None)
     target = create_tag(conn, "Философия", "topic", None)
     add_alias(conn, source["id"], "немецкий идеализм")
-    conn.execute(
-        "INSERT INTO books(key, dir, basename, title, author, year, section, section_source, "
-        "kind, formats_json, files_json, primary_file, size, mtime, has_cover, cover_error, "
-        "added_at, seen_at, missing) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (
-            "book-1",
-            ".",
-            "b.pdf",
-            "Book",
-            None,
-            None,
-            None,
-            None,
-            "book",
-            "[]",
-            "[]",
-            "b.pdf",
-            1,
-            1.0,
-            0,
-            None,
-            1.0,
-            1.0,
-            0,
-        ),
-    )
+    _insert_book(conn, "book-1")
+    _insert_book(conn, "book-2")
     conn.commit()
-    set_book_tags(conn, "book-1", ["Гегель", "Философия"])
+    set_book_tags(conn, "book-1", ["Гегель"])
+    set_book_tags(conn, "book-2", ["Гегель", "Философия"])
     conn.commit()
 
     summary = merge_tags(conn, source["id"], target["id"])
 
     assert summary["moved"] == 1
     assert summary["aliases_moved"] == 1
-    assert summary["skipped"] == 0
+    assert summary["dropped"] == 1
     assert resolve(conn, ["немецкий идеализм"]) == [target["id"]]
-    tags = tags_for(conn, ["book-1"])
+    tags = tags_for(conn, ["book-1", "book-2"])
     assert {item["name"] for item in tags["book-1"]} == {"Философия"}
+    assert {item["name"] for item in tags["book-2"]} == {"Философия"}
+
+
+def test_set_book_tags_replaces_manual_tags_only(tmp_path: Path) -> None:
+    conn = connect_at(tmp_path / "tags.db")
+    left = create_tag(conn, "Гегель", "topic", None)
+    right = create_tag(conn, "Диалектика", "topic", None)
+    _insert_book(conn, "book-1")
+    conn.commit()
+    set_book_tags(conn, "book-1", ["Гегель", "Диалектика"])
+    conn.execute("UPDATE book_tags SET source = 'auto' WHERE tag_id = ?", (right["id"],))
+    conn.commit()
+
+    set_book_tags(conn, "book-1", ["Гегель"])
+    rows = conn.execute(
+        "SELECT tag_id, source FROM book_tags WHERE book_key = ? ORDER BY tag_id",
+        ("book-1",),
+    ).fetchall()
+
+    assert [(row["tag_id"], row["source"]) for row in rows] == [
+        (left["id"], "manual"),
+        (right["id"], "auto"),
+    ]
+
+
+def test_tags_count_ignores_missing_books(tmp_path: Path) -> None:
+    conn = connect_at(tmp_path / "tags.db")
+    create_tag(conn, "Гегель", "topic", None)
+    _insert_book(conn, "book-1")
+    _insert_book(conn, "book-2", missing=1)
+    conn.commit()
+    set_book_tags(conn, "book-1", ["Гегель"])
+    set_book_tags(conn, "book-2", ["Гегель"])
+    conn.commit()
+
+    rows = list_tags(conn)
+    assert rows[0]["count"] == 1
+
+
+def test_manual_tags_survive_rescan_and_missing_return(tmp_path: Path) -> None:
+    conn = connect_at(tmp_path / "tags.db")
+    create_tag(conn, "Гегель", "topic", None)
+    _insert_book(conn, "book-1")
+    conn.commit()
+    set_book_tags(conn, "book-1", ["Гегель"])
+    conn.commit()
+    conn.execute("UPDATE books SET missing = 1 WHERE key = ?", ("book-1",))
+    conn.commit()
+    assert {item["name"] for item in tags_for(conn, ["book-1"])["book-1"]} == {"Гегель"}
+    conn.execute("UPDATE books SET missing = 0 WHERE key = ?", ("book-1",))
+    conn.commit()
+    assert {item["name"] for item in tags_for(conn, ["book-1"])["book-1"]} == {"Гегель"}
 
 
 def test_delete_used_tag_is_blocked(tmp_path: Path) -> None:
     conn = connect_at(tmp_path / "tags.db")
     tag = create_tag(conn, "Гегель", "topic", None)
-    conn.execute(
-        "INSERT INTO books(key, dir, basename, title, author, year, section, section_source, "
-        "kind, formats_json, files_json, primary_file, size, mtime, has_cover, cover_error, "
-        "added_at, seen_at, missing) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (
-            "book-1",
-            ".",
-            "b.pdf",
-            "Book",
-            None,
-            None,
-            None,
-            None,
-            "book",
-            "[]",
-            "[]",
-            "b.pdf",
-            1,
-            1.0,
-            0,
-            None,
-            1.0,
-            1.0,
-            0,
-        ),
-    )
+    _insert_book(conn, "book-1")
     conn.commit()
     set_book_tags(conn, "book-1", ["Гегель"])
     conn.commit()
@@ -147,32 +190,7 @@ def test_list_tags_reports_counts_and_aliases(tmp_path: Path) -> None:
     conn = connect_at(tmp_path / "tags.db")
     tag = create_tag(conn, "Гегель", "topic", "desc")
     add_alias(conn, tag["id"], "немецкий идеализм")
-    conn.execute(
-        "INSERT INTO books(key, dir, basename, title, author, year, section, section_source, "
-        "kind, formats_json, files_json, primary_file, size, mtime, has_cover, cover_error, "
-        "added_at, seen_at, missing) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (
-            "book-1",
-            ".",
-            "b.pdf",
-            "Book",
-            None,
-            None,
-            None,
-            None,
-            "book",
-            "[]",
-            "[]",
-            "b.pdf",
-            1,
-            1.0,
-            0,
-            None,
-            1.0,
-            1.0,
-            0,
-        ),
-    )
+    _insert_book(conn, "book-1")
     conn.commit()
     set_book_tags(conn, "book-1", ["Гегель"])
     conn.commit()
@@ -185,12 +203,22 @@ def test_list_tags_reports_counts_and_aliases(tmp_path: Path) -> None:
 def test_set_book_tags_unknown_name_rolls_back(tmp_path: Path) -> None:
     conn = connect_at(tmp_path / "tags.db")
     create_tag(conn, "Гегель", "topic", None)
+    _insert_book(conn, "book-1")
+    conn.commit()
+
+    with pytest.raises(TagNotFound):
+        set_book_tags(conn, "book-1", ["Гегель", "Неизвестный"])
+
+    assert tags_for(conn, ["book-1"]) == {"book-1": []}
+
+
+def _insert_book(conn, key: str, missing: int = 0) -> None:
     conn.execute(
         "INSERT INTO books(key, dir, basename, title, author, year, section, section_source, "
         "kind, formats_json, files_json, primary_file, size, mtime, has_cover, cover_error, "
         "added_at, seen_at, missing) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
-            "book-1",
+            key,
             ".",
             "b.pdf",
             "Book",
@@ -208,12 +236,6 @@ def test_set_book_tags_unknown_name_rolls_back(tmp_path: Path) -> None:
             None,
             1.0,
             1.0,
-            0,
+            missing,
         ),
     )
-    conn.commit()
-
-    with pytest.raises(TagNotFound):
-        set_book_tags(conn, "book-1", ["Гегель", "Неизвестный"])
-
-    assert tags_for(conn, ["book-1"]) == {"book-1": []}

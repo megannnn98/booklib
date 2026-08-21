@@ -39,8 +39,19 @@ def normalize(value: str) -> str:
     return cleaned
 
 
+def normalize_optional(value: str | None, field: str) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        raise TagInvalid(f"пустое значение: {field}")
+    return cleaned
+
+
 def _validate_kind(kind: str) -> str:
-    cleaned = normalize(kind)
+    cleaned = normalize_optional(kind, "kind")
+    if cleaned is None:
+        raise TagInvalid("пустое значение: kind")
     if cleaned not in KINDS:
         raise TagInvalid(f"неизвестный kind: {kind}")
     return cleaned
@@ -124,7 +135,7 @@ def create_tag(
 ) -> dict:
     name = normalize(name)
     kind = _validate_kind(kind)
-    description = description.strip() if description is not None else None
+    description = normalize_optional(description, "description")
     _begin_immediate(conn)
     try:
         _ensure_name_alias_free(conn, None, name)
@@ -156,7 +167,11 @@ def update_tag(
             raise TagNotFound(f"нет такого тега: {tag_id}")
         new_name = normalize(name) if name is not None else tag["name"]
         new_kind = _validate_kind(kind) if kind is not None else tag["kind"]
-        new_description = description.strip() if description is not None else tag["description"]
+        new_description = (
+            normalize_optional(description, "description")
+            if description is not None
+            else tag["description"]
+        )
         _ensure_name_alias_free(conn, tag_id, new_name)
         if new_name != tag["name"] and _tag_by_name(conn, new_name) is not None:
             raise TagConflict("тег с таким именем уже существует")
@@ -239,11 +254,11 @@ def merge_tags(conn: sqlite3.Connection, source_id: int, target_id: int) -> dict
         if target is None:
             raise TagNotFound(f"нет такого тега: {target_id}")
 
-        conn.execute(
+        moved = conn.execute(
             "UPDATE OR IGNORE book_tags SET tag_id = ? WHERE tag_id = ?",
             (target_id, source_id),
-        )
-        moved = conn.execute(
+        ).rowcount
+        dropped = conn.execute(
             "DELETE FROM book_tags WHERE tag_id = ?",
             (source_id,),
         ).rowcount
@@ -296,7 +311,12 @@ def merge_tags(conn: sqlite3.Connection, source_id: int, target_id: int) -> dict
         conn.execute("DELETE FROM tag_aliases WHERE tag_id = ?", (source_id,))
         conn.execute("DELETE FROM tags WHERE id = ?", (source_id,))
         conn.commit()
-        return {"moved": moved, "aliases_moved": aliases_moved, "skipped": skipped}
+        return {
+            "moved": moved,
+            "dropped": dropped,
+            "aliases_moved": aliases_moved,
+            "skipped": skipped,
+        }
     except Exception:
         conn.rollback()
         raise
@@ -320,12 +340,12 @@ def resolve(conn: sqlite3.Connection, names: list[str]) -> list[int]:
 
 
 def set_book_tags(conn: sqlite3.Connection, key: str, names: list[str]) -> dict:
-    ids = resolve(conn, names)
     _begin_immediate(conn)
     try:
         book = conn.execute("SELECT 1 FROM books WHERE key = ?", (key,)).fetchone()
         if book is None:
             raise TagNotFound(f"нет такой карточки: {key}")
+        ids = resolve(conn, names)
         conn.execute(
             "DELETE FROM book_tags WHERE book_key = ? AND source = 'manual'",
             (key,),
@@ -347,38 +367,19 @@ def tags_for(conn: sqlite3.Connection, keys: list[str]) -> dict[str, list[dict]]
         return {}
     placeholders = ",".join("?" for _ in keys)
     rows = conn.execute(
-        "SELECT bt.book_key, t.id, t.name, t.kind, t.description, t.created_at "
+        "SELECT bt.book_key, t.id, t.name, t.kind "
         "FROM book_tags bt JOIN tags t ON t.id = bt.tag_id "
         f"WHERE bt.book_key IN ({placeholders}) "
         "ORDER BY bt.book_key, t.name COLLATE unicode_ci",
         tuple(keys),
     ).fetchall()
-    aliases = conn.execute(
-        "SELECT tag_id, alias FROM tag_aliases ORDER BY alias COLLATE unicode_ci"
-    ).fetchall()
-    alias_map: dict[int, list[str]] = {}
-    for row in aliases:
-        alias_map.setdefault(row["tag_id"], []).append(row["alias"])
-
     result: dict[str, list[dict[str, object]]] = {key: [] for key in keys}
-    counts = {
-        row["id"]: conn.execute(
-            "SELECT COUNT(*) AS n FROM book_tags bt JOIN books b ON b.key = bt.book_key "
-            "WHERE bt.tag_id = ? AND b.missing = 0",
-            (row["id"],),
-        ).fetchone()["n"]
-        for row in rows
-    }
     for row in rows:
         result[row["book_key"]].append(
             {
                 "id": row["id"],
                 "name": row["name"],
                 "kind": row["kind"],
-                "description": row["description"],
-                "created_at": row["created_at"],
-                "aliases": alias_map.get(row["id"], []),
-                "count": counts[row["id"]],
             }
         )
     return result

@@ -7,7 +7,6 @@ const state = {
   sections: [],
   local: true,
   tags: [],
-  tagFilterOpen: false,
   availableTags: [],
   editorTags: [],
   selectedTagId: null,
@@ -92,6 +91,9 @@ async function api(path, options = {}) {
     try {
       const body = await response.json();
       detail = body.error || body.detail || detail;
+      if (body.count !== undefined) {
+        detail = `${detail} (${body.count})`;
+      }
     } catch { /* тело не json — оставляем код */ }
     throw new Error(detail);
   }
@@ -112,10 +114,6 @@ function plural(n, one, few, many) {
   if (mod10 === 1 && mod100 !== 11) return one;
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
   return many;
-}
-
-function tagKey(tag) {
-  return `${tag.name}::${tag.kind}`;
 }
 
 function normalizeTagName(value) {
@@ -188,11 +186,6 @@ function renderTagBar() {
   el.tagbar.replaceChildren(...chips, reset);
 }
 
-function refreshTagDatalist() {
-  el.tagsList.replaceChildren(...state.availableTags.map((tag) =>
-    Object.assign(document.createElement("option"), { value: tag.name })));
-}
-
 function renderFilterList() {
   const term = el.tfSearch.value.trim().toLowerCase();
   const rows = state.availableTags.filter((tag) => {
@@ -258,9 +251,19 @@ function renderAdminList() {
   }));
 }
 
+async function runTagAction(action) {
+  try {
+    await action();
+    await loadTags();
+  } catch (error) {
+    toast(`Не сохранилось: ${error.message}`, true);
+  }
+}
+
 async function loadTags() {
   state.availableTags = await api("/api/tags");
-  refreshTagDatalist();
+  el.tagsList.replaceChildren(...state.availableTags.map((tag) =>
+    Object.assign(document.createElement("option"), { value: tag.name })));
   renderTagBar();
   renderFilterList();
   renderAdminList();
@@ -391,7 +394,8 @@ function editBook(book) {
   el.eSection.value = book.section || "";
   state.editorTags = [...(book.tags || [])];
   renderEditorTags();
-  renderTagDatalist();
+  el.tagsList.replaceChildren(...state.availableTags.map((tag) =>
+    Object.assign(document.createElement("option"), { value: tag.name })));
   el.editor.returnValue = "cancel";
   el.editor.showModal();
 
@@ -624,15 +628,12 @@ el.eTagInput.addEventListener("keydown", (event) => {
     el.eTagAdd.click();
   }
 });
-el.taCreate.addEventListener("click", async () => {
-  await postJson("/api/tags", {
-    name: el.taName.value,
-    kind: el.taKind.value || "custom",
-    description: el.taDescription.value,
-  });
-  await loadTags();
-});
-el.taSave.addEventListener("click", async () => {
+el.taCreate.addEventListener("click", () => runTagAction(() => postJson("/api/tags", {
+  name: el.taName.value,
+  kind: el.taKind.value || "custom",
+  description: el.taDescription.value,
+})));
+el.taSave.addEventListener("click", () => runTagAction(async () => {
   if (state.selectedTagId == null) return;
   await api(`/api/tags/${state.selectedTagId}`, {
     method: "PUT",
@@ -643,33 +644,29 @@ el.taSave.addEventListener("click", async () => {
       description: el.taDescription.value,
     }),
   });
-  await loadTags();
-});
-el.taAddAlias.addEventListener("click", async () => {
+}));
+el.taAddAlias.addEventListener("click", () => runTagAction(async () => {
   if (state.selectedTagId == null) return;
   await postJson(`/api/tags/${state.selectedTagId}/aliases`, { alias: el.taAlias.value });
-  await loadTags();
-});
-el.taRemoveAlias.addEventListener("click", async () => {
+}));
+el.taRemoveAlias.addEventListener("click", () => runTagAction(async () => {
   if (state.selectedTagId == null) return;
-  await api(`/api/tags/${state.selectedTagId}/aliases?alias=${encodeURIComponent(el.taAlias.value)}`, {
-    method: "DELETE",
-  });
-  await loadTags();
-});
-el.taMerge.addEventListener("click", async () => {
+  await api(
+    `/api/tags/${state.selectedTagId}/aliases?alias=${encodeURIComponent(el.taAlias.value)}`,
+    { method: "DELETE" },
+  );
+}));
+el.taMerge.addEventListener("click", () => runTagAction(async () => {
   if (state.selectedTagId == null) return;
   const target = state.availableTags.find((item) => item.name === el.taMergeTarget.value);
   if (!target) return;
   await postJson("/api/tags/merge", { source: state.selectedTagId, target: target.id });
-  await loadTags();
-});
-el.taDelete.addEventListener("click", async () => {
+}));
+el.taDelete.addEventListener("click", () => runTagAction(async () => {
   if (state.selectedTagId == null) return;
   await api(`/api/tags/${state.selectedTagId}`, { method: "DELETE" });
   state.selectedTagId = null;
-  await loadTags();
-});
+}));
 // Единственный путь к проверке пути: и клик по «Проверить», и Enter в поле —
 // это submit формы. preventDefault оставляет диалог открытым.
 el.sForm.addEventListener("submit", (event) => {
