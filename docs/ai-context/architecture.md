@@ -109,7 +109,17 @@ scan_on_start)` — единственная реализация: валида�
 | Кириллица ищется без учёта регистра | `test_search_is_case_insensitive_for_cyrillic` |
 | Кириллица сортируется без учёта регистра | `test_cyrillic_title_sort_ignores_case` |
 | Удалённый клиент не трогает привилегированные ручки | `test_remote_is_blocked_from_privileged_routes` |
-| `GET /api/tags` и фильтр по тегу доступны гостю | `test_public_tags_and_book_tags`, `test_remote_can_read_catalog_and_covers` |
+| `GET /api/tags` и фильтр по тегу доступны гостю | `test_public_tags_and_book_tags`, `test_remote_can_read_tags` |
+| Гость не меняет теги, локально без `X-Booklib` — тоже | `test_remote_cannot_mutate_tags`, `test_remote_is_blocked_from_privileged_routes`, `test_local_without_header_is_403` |
+| Имена и алиасы тегов уникальны без учёта регистра | `test_tags_are_case_insensitively_unique`, `test_aliases_are_case_insensitively_unique` |
+| Имя тега и алиас чужого тега не пересекаются | `test_name_and_alias_conflict_cross_tables`, `test_update_tag_rejects_alias_conflict` |
+| Несколько `?tag=` — пересечение, а не объединение | `test_several_tags_filter_by_and` |
+| Фильтр тегов складывается с разделом, поиском, пагинацией | `test_tag_filter_composes_with_section_and_search` |
+| Поиск находит книгу по имени тега и по алиасу | `test_search_finds_book_by_tag_name` |
+| Теги переживают рескан, пропажу и возврат книги | `test_tags_survive_rescan_and_book_disappearance` |
+| `count` тега не считает пропавшие книги | `test_tags_count_ignores_missing_books` |
+| Замена набора тегов — это набор одной карточки | `test_removing_tag_from_one_book_keeps_other_books`, `test_set_book_tags_replaces_manual_tags_only` |
+| Используемый тег не удаляется, merge не теряет связи | `test_delete_used_tag_is_blocked`, `test_merge_moves_book_links_and_aliases` |
 | `/api/status` не показывает пути ФС гостю | `test_status_local_flag_and_paths` |
 | Гостю доступны лист файлов и скачивание | `test_files_lists_formats_in_primary_order`, `test_download_serves_file_with_attachment` |
 | Range/206 при скачивании | `test_download_supports_range` |
@@ -128,8 +138,17 @@ scan_on_start)` — единственная реализация: валида�
   «забыть» проверку роли.
 - **`app`** — публичные ручки: `/api/status` (с `local` и скрытыми для гостя
   путями ФС), `/api/cover`, `/api/files`, `/api/download`, `GET /api/tags`.
-  То, чем можно
-  делиться ссылкой.
+  То, чем можно делиться ссылкой.
+
+Теги — вторая ось классификации, независимая от `section`. Словарь (`tags`,
+`tag_aliases`) отделён от назначений (`book_tags`), поэтому рескан их не
+трогает: сканер удаляет строки `books` никогда, только ставит `missing = 1`,
+и пропавшая книга возвращается со своими тегами. `book_tags.source` заведён
+под этап 2 (автоматическая расстановка) — ручная замена набора удаляет только
+`source = 'manual'`. Фильтр `?tag=` принимает и каноническое имя, и алиас:
+имена резолвятся в id один раз, дальше на каждый id идёт свой `EXISTS`, что и
+даёт AND и складывается с `section`, `q`, `sort`, `limit`, `offset` в общем
+`where`.
 
 `/api/download` защищён двумя независимыми guard'ами: `file` обязан быть
 элементом `files_json` карточки (whitelist по построению) и после `resolve()`

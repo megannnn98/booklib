@@ -4,8 +4,6 @@
 (СУБД, кэш обложек) лежит в ~/.cache/booklib.
 """
 
-# ruff: noqa: PLR0917
-
 from __future__ import annotations
 
 import json
@@ -213,13 +211,14 @@ def api_tags() -> list[dict]:
 
 @app.get("/api/books")
 def api_books(
+    *,
     section: str | None = None,
     q: str | None = None,
     tag: Annotated[list[str] | None, Query()] = None,
     sort: str = "title",
     limit: int = Query(500, le=2000),
     offset: int = 0,
-) -> dict:  # noqa: PLR0917
+) -> dict:
     order = SORTS.get(sort, SORTS["title"])
     where = ["b.missing = 0"]
     params: list = []
