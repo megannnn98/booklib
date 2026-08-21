@@ -1,6 +1,16 @@
 "use strict";
 
-const state = { section: "*", q: "", sort: "title", sections: [], local: true };
+const state = {
+  section: "*",
+  q: "",
+  sort: "title",
+  sections: [],
+  local: true,
+  tags: [],
+  availableTags: [],
+  editorTags: [],
+  selectedTagId: null,
+};
 
 const el = {
   sections: document.getElementById("sections"),
@@ -11,7 +21,30 @@ const el = {
   sort: document.getElementById("sort"),
   rescan: document.getElementById("rescan"),
   settingsBtn: document.getElementById("settingsBtn"),
+  tagsBtn: document.getElementById("tagsBtn"),
+  tagsAdminBtn: document.getElementById("tagsAdminBtn"),
   burger: document.getElementById("burger"),
+  tagbar: document.getElementById("tagbar"),
+  tagfilter: document.getElementById("tagfilter"),
+  tfSearch: document.getElementById("tf-search"),
+  tfList: document.getElementById("tf-list"),
+  tfClear: document.getElementById("tf-clear"),
+  tfClose: document.getElementById("tf-close"),
+  tagsadmin: document.getElementById("tagsadmin"),
+  taSearch: document.getElementById("ta-search"),
+  taList: document.getElementById("ta-list"),
+  taName: document.getElementById("ta-name"),
+  taKind: document.getElementById("ta-kind"),
+  taDescription: document.getElementById("ta-description"),
+  taAlias: document.getElementById("ta-alias"),
+  taMergeTarget: document.getElementById("ta-merge-target"),
+  taCreate: document.getElementById("ta-create"),
+  taSave: document.getElementById("ta-save"),
+  taAddAlias: document.getElementById("ta-add-alias"),
+  taRemoveAlias: document.getElementById("ta-remove-alias"),
+  taMerge: document.getElementById("ta-merge"),
+  taDelete: document.getElementById("ta-delete"),
+  taClose: document.getElementById("ta-close"),
   settings: document.getElementById("settings"),
   sCurrent: document.getElementById("s-current"),
   sForm: document.getElementById("s-form"),
@@ -31,6 +64,10 @@ const el = {
   eTitle: document.getElementById("e-title"),
   eAuthor: document.getElementById("e-author"),
   eSection: document.getElementById("e-section"),
+  eTags: document.getElementById("e-tags"),
+  eTagInput: document.getElementById("e-tag-input"),
+  eTagAdd: document.getElementById("e-tag-add"),
+  tagsList: document.getElementById("tags-list"),
   sectionsList: document.getElementById("sections-list"),
 };
 
@@ -54,6 +91,9 @@ async function api(path, options = {}) {
     try {
       const body = await response.json();
       detail = body.error || body.detail || detail;
+      if (body.count !== undefined) {
+        detail = `${detail} (${body.count})`;
+      }
     } catch { /* тело не json — оставляем код */ }
     throw new Error(detail);
   }
@@ -74,6 +114,159 @@ function plural(n, one, few, many) {
   if (mod10 === 1 && mod100 !== 11) return one;
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
   return many;
+}
+
+function normalizeTagName(value) {
+  return value.trim();
+}
+
+function currentTagNames() {
+  return state.editorTags.map((tag) => tag.name);
+}
+
+function renderTagChips(container, items, onRemove, onClick) {
+  container.replaceChildren(...items.map((item) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "tag-chip";
+    chip.textContent = item.name;
+    if (item.kind) {
+      chip.dataset.kind = item.kind;
+    }
+    if (onClick) {
+      chip.onclick = (event) => {
+        event.stopPropagation();
+        onClick(item);
+      };
+    }
+    if (onRemove) {
+      const remove = document.createElement("span");
+      remove.className = "tag-x";
+      remove.textContent = "✕";
+      remove.onclick = (event) => {
+        event.stopPropagation();
+        onRemove(item);
+      };
+      chip.append(remove);
+    }
+    return chip;
+  }));
+}
+
+function renderTagBar() {
+  const selected = state.availableTags.filter((tag) => state.tags.includes(tag.name));
+  el.tagbar.hidden = selected.length === 0;
+  if (!selected.length) {
+    el.tagsBtn.textContent = "🏷 теги 0";
+    el.tagbar.textContent = "";
+    return;
+  }
+  el.tagsBtn.textContent = `🏷 теги ${selected.length}`;
+  const chips = selected.map((tag) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "tag-chip";
+    chip.textContent = tag.name;
+    chip.onclick = () => {
+      state.tags = state.tags.filter((name) => name !== tag.name);
+      renderTagBar();
+      loadBooks();
+    };
+    return chip;
+  });
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.className = "tag-reset";
+  reset.textContent = "сбросить";
+  reset.onclick = () => {
+    state.tags = [];
+    renderTagBar();
+    loadBooks();
+  };
+  el.tagbar.replaceChildren(...chips, reset);
+}
+
+function renderFilterList() {
+  const term = el.tfSearch.value.trim().toLowerCase();
+  const rows = state.availableTags.filter((tag) => {
+    if (!term) return true;
+    return tag.name.toLowerCase().includes(term)
+      || (tag.aliases || []).some((alias) => alias.toLowerCase().includes(term));
+  });
+  el.tfList.replaceChildren(...rows.map((tag) => {
+    const row = document.createElement("label");
+    row.className = "check-row";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = state.tags.includes(tag.name);
+    input.onchange = () => {
+      if (input.checked) {
+        if (!state.tags.includes(tag.name)) state.tags.push(tag.name);
+      } else {
+        state.tags = state.tags.filter((name) => name !== tag.name);
+      }
+      renderTagBar();
+      loadBooks();
+    };
+    const text = document.createElement("span");
+    text.textContent = `${tag.name} · ${tag.kind} · ${tag.count}`;
+    row.append(input, text);
+    return row;
+  }));
+}
+
+function renderEditorTags() {
+  renderTagChips(
+    el.eTags,
+    state.editorTags,
+    (tag) => {
+      state.editorTags = state.editorTags.filter((item) => item.name !== tag.name);
+      renderEditorTags();
+    },
+  );
+}
+
+function renderAdminList() {
+  const term = el.taSearch.value.trim().toLowerCase();
+  const tagsToShow = state.availableTags.filter((tag) => {
+    if (!term) return true;
+    return tag.name.toLowerCase().includes(term)
+      || tag.kind.toLowerCase().includes(term)
+      || (tag.aliases || []).some((alias) => alias.toLowerCase().includes(term));
+  });
+  el.taList.replaceChildren(...tagsToShow.map((tag) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "admin-row";
+    button.textContent = `${tag.name} · ${tag.kind} · ${tag.count}`;
+    button.onclick = () => {
+      state.selectedTagId = tag.id;
+      el.taName.value = tag.name;
+      el.taKind.value = tag.kind;
+      el.taDescription.value = tag.description || "";
+      el.taAlias.value = "";
+      el.taMergeTarget.value = "";
+    };
+    return button;
+  }));
+}
+
+async function runTagAction(action) {
+  try {
+    await action();
+    await loadTags();
+  } catch (error) {
+    toast(`Не сохранилось: ${error.message}`, true);
+  }
+}
+
+async function loadTags() {
+  state.availableTags = await api("/api/tags");
+  el.tagsList.replaceChildren(...state.availableTags.map((tag) =>
+    Object.assign(document.createElement("option"), { value: tag.name })));
+  renderTagBar();
+  renderFilterList();
+  renderAdminList();
 }
 
 async function loadStatus() {
@@ -165,13 +358,36 @@ function cardNode(book) {
     textContent: parts.join(" · "),
   });
 
+  let tagsBox = null;
+  if (book.tags && book.tags.length) {
+    tagsBox = document.createElement("div");
+    tagsBox.className = "tags";
+    const visible = book.tags.slice(0, 3);
+    renderTagChips(tagsBox, visible, null, (tag) => {
+      state.tags = [tag.name];
+      renderTagBar();
+      loadBooks();
+    });
+    if (book.tags.length > 3) {
+      const more = document.createElement("span");
+      more.className = "tag-more";
+      more.textContent = `+${book.tags.length - 3}`;
+      more.onclick = (event) => {
+        event.stopPropagation();
+      };
+      tagsBox.append(more);
+    }
+  }
+
+  card.append(thumb, title, meta);
+  if (tagsBox) {
+    card.append(tagsBox);
+  }
   if (book.edited) {
     card.append(Object.assign(document.createElement("div"), {
       className: "edited", textContent: "правлено",
     }));
   }
-
-  card.append(thumb, title, meta);
   card.onclick = () => (state.local ? openBook(book) : openFiles(book));
   return card;
 }
@@ -181,6 +397,10 @@ function editBook(book) {
   el.eTitle.value = book.title || "";
   el.eAuthor.value = book.author || "";
   el.eSection.value = book.section || "";
+  state.editorTags = [...(book.tags || [])];
+  renderEditorTags();
+  el.tagsList.replaceChildren(...state.availableTags.map((tag) =>
+    Object.assign(document.createElement("option"), { value: tag.name })));
   el.editor.returnValue = "cancel";
   el.editor.showModal();
 
@@ -195,10 +415,11 @@ function editBook(book) {
             title: el.eTitle.value,
             author: el.eAuthor.value,
             section: el.eSection.value,
+            tags: currentTagNames(),
           };
       const result = await postJson("/api/book", payload);
       toast(result.action === "reset" ? "Правки сброшены" : "Сохранено");
-      await Promise.all([loadSections(), loadBooks()]);
+      await Promise.all([loadTags(), loadSections(), loadBooks()]);
     } catch (error) {
       toast(`Не сохранилось: ${error.message}`, true);
     }
@@ -342,6 +563,7 @@ async function openFiles(book) {
 async function loadBooks() {
   const params = new URLSearchParams({ section: state.section, sort: state.sort });
   if (state.q) params.set("q", state.q);
+  for (const tag of state.tags) params.append("tag", tag);
   const data = await api(`/api/books?${params}`);
 
   el.counter.textContent = data.total
@@ -349,6 +571,11 @@ async function loadBooks() {
       + (data.books.length < data.total ? `, показаны первые ${data.books.length}` : "")
     : "ничего не найдено";
   el.grid.replaceChildren(...data.books.map(cardNode));
+}
+
+function renderTagDatalist() {
+  el.tagsList.replaceChildren(...state.availableTags.map((tag) =>
+    Object.assign(document.createElement("option"), { value: tag.name })));
 }
 
 let searchTimer = null;
@@ -366,6 +593,79 @@ el.sort.addEventListener("change", () => {
 });
 
 el.settingsBtn.addEventListener("click", openSettings);
+el.tagsBtn.addEventListener("click", () => {
+  el.tfSearch.value = "";
+  renderFilterList();
+  el.tagfilter.showModal();
+});
+el.tagsAdminBtn.addEventListener("click", () => {
+  el.taSearch.value = "";
+  renderAdminList();
+  el.tagsadmin.showModal();
+});
+el.tfSearch.addEventListener("input", renderFilterList);
+el.tfClear.addEventListener("click", () => {
+  state.tags = [];
+  renderTagBar();
+  loadBooks();
+});
+el.tfClose.addEventListener("click", () => el.tagfilter.close());
+el.taSearch.addEventListener("input", renderAdminList);
+el.taClose.addEventListener("click", () => el.tagsadmin.close());
+el.eTagAdd.addEventListener("click", () => {
+  const value = normalizeTagName(el.eTagInput.value);
+  if (!value) return;
+  const tag = state.availableTags.find((item) => item.name === value);
+  if (!tag || state.editorTags.some((item) => item.name === tag.name)) return;
+  state.editorTags = [...state.editorTags, tag];
+  el.eTagInput.value = "";
+  renderEditorTags();
+});
+el.eTagInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    el.eTagAdd.click();
+  }
+});
+el.taCreate.addEventListener("click", () => runTagAction(() => postJson("/api/tags", {
+  name: el.taName.value,
+  kind: el.taKind.value || "custom",
+  description: el.taDescription.value,
+})));
+el.taSave.addEventListener("click", () => runTagAction(async () => {
+  if (state.selectedTagId == null) return;
+  await api(`/api/tags/${state.selectedTagId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: el.taName.value,
+      kind: el.taKind.value,
+      description: el.taDescription.value,
+    }),
+  });
+}));
+el.taAddAlias.addEventListener("click", () => runTagAction(async () => {
+  if (state.selectedTagId == null) return;
+  await postJson(`/api/tags/${state.selectedTagId}/aliases`, { alias: el.taAlias.value });
+}));
+el.taRemoveAlias.addEventListener("click", () => runTagAction(async () => {
+  if (state.selectedTagId == null) return;
+  await api(
+    `/api/tags/${state.selectedTagId}/aliases?alias=${encodeURIComponent(el.taAlias.value)}`,
+    { method: "DELETE" },
+  );
+}));
+el.taMerge.addEventListener("click", () => runTagAction(async () => {
+  if (state.selectedTagId == null) return;
+  const target = state.availableTags.find((item) => item.name === el.taMergeTarget.value);
+  if (!target) return;
+  await postJson("/api/tags/merge", { source: state.selectedTagId, target: target.id });
+}));
+el.taDelete.addEventListener("click", () => runTagAction(async () => {
+  if (state.selectedTagId == null) return;
+  await api(`/api/tags/${state.selectedTagId}`, { method: "DELETE" });
+  state.selectedTagId = null;
+}));
 // Единственный путь к проверке пути: и клик по «Проверить», и Enter в поле —
 // это submit формы. preventDefault оставляет диалог открытым.
 el.sForm.addEventListener("submit", (event) => {
@@ -403,7 +703,7 @@ el.rescan.addEventListener("click", async () => {
 
 (async function start() {
   try {
-    await Promise.all([loadStatus(), loadSections(), loadBooks()]);
+    await Promise.all([loadStatus(), loadTags(), loadSections(), loadBooks()]);
   } catch (error) {
     toast(`Не удалось загрузить каталог: ${error.message}`, true);
   }

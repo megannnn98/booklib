@@ -42,8 +42,28 @@ CREATE TABLE IF NOT EXISTS state(
     k TEXT PRIMARY KEY,
     v TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS tags(
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL COLLATE unicode_ci UNIQUE,
+    kind        TEXT NOT NULL DEFAULT 'custom',
+    description TEXT,
+    created_at  REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tag_aliases(
+    id     INTEGER PRIMARY KEY,
+    tag_id INTEGER NOT NULL REFERENCES tags(id),
+    alias  TEXT NOT NULL COLLATE unicode_ci UNIQUE
+);
+CREATE TABLE IF NOT EXISTS book_tags(
+    book_key TEXT NOT NULL REFERENCES books(key),
+    tag_id   INTEGER NOT NULL REFERENCES tags(id),
+    source   TEXT NOT NULL DEFAULT 'manual',
+    PRIMARY KEY (book_key, tag_id)
+);
 CREATE INDEX IF NOT EXISTS books_section ON books(section);
 CREATE INDEX IF NOT EXISTS books_missing ON books(missing);
+CREATE INDEX IF NOT EXISTS book_tags_tag ON book_tags(tag_id);
+CREATE INDEX IF NOT EXISTS tag_aliases_tag ON tag_aliases(tag_id);
 """
 
 # Сколько ждать освобождения СУБД, прежде чем отдать "database is locked"

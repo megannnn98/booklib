@@ -13,13 +13,14 @@ import sys
 import time
 from contextlib import asynccontextmanager, closing
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from booklib import covers, opener
+from booklib import covers, opener, tags
 from booklib.config.settings import field_source, get_settings
 from booklib.db import connect, init_state
 from booklib.errors import LibraryUnavailable
@@ -65,6 +66,14 @@ def _invalid_root(_request, exc: InvalidRoot) -> JSONResponse:
     return JSONResponse({"detail": str(exc)}, status_code=400)
 
 
+@app.exception_handler(tags.TagError)
+def _tag_error(_request, exc: tags.TagError) -> JSONResponse:
+    payload: dict[str, object] = {"detail": str(exc)}
+    if isinstance(exc, tags.TagInUse):
+        payload["count"] = exc.count
+    return JSONResponse(payload, status_code=exc.status)
+
+
 class OpenRequest(BaseModel):
     key: str
 
@@ -76,6 +85,7 @@ class EditRequest(BaseModel):
     title: str | None = None
     author: str | None = None
     section: str | None = None
+    tags: list[str] | None = None
     reset: bool = False
 
 
@@ -84,6 +94,31 @@ class SettingsRequest(BaseModel):
 
     root: str
     scan_on_start: bool | None = None
+
+
+class TagCreateRequest(BaseModel):
+    name: str
+    kind: str = "custom"
+    description: str | None = None
+
+
+class TagUpdateRequest(BaseModel):
+    name: str | None = None
+    kind: str | None = None
+    description: str | None = None
+
+
+class AliasRequest(BaseModel):
+    alias: str
+
+
+class MergeRequest(BaseModel):
+    source: int
+    target: int
+
+
+class BookTagsRequest(BaseModel):
+    tags: list[str]
 
 
 def require_own_page(x_booklib: str | None = Header(default=None)) -> None:
@@ -118,6 +153,13 @@ def require_local(request: Request) -> None:
         raise HTTPException(
             status_code=403, detail="привилегированная ручка доступна только с самого компьютера"
         )
+
+
+def _clean_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
 
 
 # Все ручки, которые что-то меняют или запускают процессы, живут в одном роутере
@@ -169,10 +211,18 @@ def api_sections() -> list[dict]:
     return [{"name": name, "count": counts[name]} for name in ordered]
 
 
+@app.get("/api/tags")
+def api_tags() -> list[dict]:
+    with closing(connect()) as conn:
+        return tags.list_tags(conn)
+
+
 @app.get("/api/books")
 def api_books(
+    *,
     section: str | None = None,
     q: str | None = None,
+    tag: Annotated[list[str] | None, Query()] = None,
     sort: str = "title",
     limit: int = Query(500, le=2000),
     offset: int = 0,
@@ -180,7 +230,6 @@ def api_books(
     order = SORTS.get(sort, SORTS["title"])
     where = ["b.missing = 0"]
     params: list = []
-
     if section and section != "*":
         where.append("COALESCE(o.section, b.section) = ?")
         params.append(section)
@@ -188,11 +237,29 @@ def api_books(
         # % и _ в запросе — это символы из имён файлов ("C++", "_v2", "x86_64", "100%"),
         # а не wildcard'ы. Без ESCAPE запрос "100%" матчил бы вообще всё.
         escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        where.append(
+        title_clause = (
             "pylower(COALESCE(o.title, b.title) || ' ' || COALESCE(o.author, b.author, '') "
             "|| ' ' || b.key) LIKE ? ESCAPE '\\'"
         )
-        params.append(f"%{escaped.lower()}%")
+        tag_clause = (
+            "EXISTS (SELECT 1 FROM book_tags bt JOIN tags t ON t.id = bt.tag_id "
+            "LEFT JOIN tag_aliases a ON a.tag_id = t.id "
+            "WHERE bt.book_key = b.key AND (pylower(t.name) LIKE ? ESCAPE '\\' "
+            "OR pylower(a.alias) LIKE ? ESCAPE '\\'))"
+        )
+        where.append(f"({title_clause} OR {tag_clause})")
+        params.extend([f"%{escaped.lower()}%"] * 3)
+    if tag:
+        with closing(connect()) as conn:
+            try:
+                tag_ids = tags.resolve(conn, tag)
+            except tags.TagNotFound as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        for tag_id in tag_ids:
+            where.append(
+                "EXISTS (SELECT 1 FROM book_tags bt WHERE bt.book_key = b.key AND bt.tag_id = ?)"
+            )
+            params.append(tag_id)
 
     sql = (
         "SELECT b.key, COALESCE(o.title, b.title) AS title, "
@@ -210,6 +277,7 @@ def api_books(
             f"WHERE {' AND '.join(where)}",
             tuple(params),
         ).fetchone()["n"]
+        book_tags = tags.tags_for(conn, [row["key"] for row in rows])
 
     books = [
         {
@@ -224,6 +292,7 @@ def api_books(
             "kind": row["kind"],
             "dir": row["dir"],
             "edited": bool(row["edited"]),
+            "tags": book_tags.get(row["key"], []),
         }
         for row in rows
     ]
@@ -408,10 +477,11 @@ def api_edit(request: EditRequest) -> dict:
         if base is None:
             raise HTTPException(status_code=404, detail=f"нет такой карточки: {request.key}")
 
-        def clean(value: str | None) -> str | None:
-            return value.strip() or None if value is not None else None
-
-        title, author, section = clean(request.title), clean(request.author), clean(request.section)
+        title, author, section = (
+            _clean_text(request.title),
+            _clean_text(request.author),
+            _clean_text(request.section),
+        )
 
         # Форма присылает все три поля, даже если пользователь менял одно. Значение,
         # совпадающее с базовым, в overrides не пишем: иначе оно скопирует туда данные
@@ -421,20 +491,85 @@ def api_edit(request: EditRequest) -> dict:
         author = author if author != base["author"] else None
         section = section if section != base["section"] else None
 
-        if request.reset or not any((title, author, section)):
-            conn.execute("DELETE FROM overrides WHERE key = ?", (request.key,))
-            action = "reset"
-        else:
-            conn.execute(
-                "INSERT INTO overrides(key, title, author, section, updated_at) "
-                "VALUES(?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET "
-                "title=excluded.title, author=excluded.author, section=excluded.section, "
-                "updated_at=excluded.updated_at",
-                (request.key, title, author, section, time.time()),
-            )
-            action = "saved"
-        conn.commit()
+        has_field_changes = any((title, author, section))
+
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if request.reset:
+                conn.execute("DELETE FROM overrides WHERE key = ?", (request.key,))
+                tags.replace_book_tags(conn, request.key, [])
+                action = "reset"
+            else:
+                if has_field_changes:
+                    conn.execute(
+                        "INSERT INTO overrides(key, title, author, section, updated_at) "
+                        "VALUES(?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET "
+                        "title=excluded.title, author=excluded.author, section=excluded.section, "
+                        "updated_at=excluded.updated_at",
+                        (request.key, title, author, section, time.time()),
+                    )
+                else:
+                    conn.execute("DELETE FROM overrides WHERE key = ?", (request.key,))
+
+                if request.tags is not None:
+                    tags.replace_book_tags(conn, request.key, request.tags)
+                    action = "saved"
+                elif has_field_changes:
+                    action = "saved"
+                else:
+                    action = "reset"
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
     return {"action": action, "key": request.key}
+
+
+@priv_routes.post("/api/tags")
+def api_create_tag(request: TagCreateRequest) -> dict:
+    with closing(connect()) as conn:
+        return tags.create_tag(conn, request.name, request.kind, request.description)
+
+
+@priv_routes.put("/api/tags/{tag_id}")
+def api_update_tag(tag_id: int, request: TagUpdateRequest) -> dict:
+    with closing(connect()) as conn:
+        description = (
+            request.description
+            if "description" in request.model_fields_set
+            else tags.DESCRIPTION_UNSET
+        )
+        return tags.update_tag(conn, tag_id, request.name, request.kind, description)
+
+
+@priv_routes.post("/api/tags/{tag_id}/aliases")
+def api_add_alias(tag_id: int, request: AliasRequest) -> dict:
+    with closing(connect()) as conn:
+        return tags.add_alias(conn, tag_id, request.alias)
+
+
+@priv_routes.delete("/api/tags/{tag_id}/aliases")
+def api_remove_alias(tag_id: int, alias: str) -> dict:
+    with closing(connect()) as conn:
+        return tags.remove_alias(conn, tag_id, alias)
+
+
+@priv_routes.delete("/api/tags/{tag_id}")
+def api_delete_tag(tag_id: int) -> dict:
+    with closing(connect()) as conn:
+        return tags.delete_tag(conn, tag_id)
+
+
+@priv_routes.post("/api/tags/merge")
+def api_merge_tags(request: MergeRequest) -> dict:
+    with closing(connect()) as conn:
+        return tags.merge_tags(conn, request.source, request.target)
+
+
+@priv_routes.put("/api/book/{key:path}/tags")
+def api_set_book_tags(key: str, request: BookTagsRequest) -> dict:
+    with closing(connect()) as conn:
+        return tags.set_book_tags(conn, key, request.tags)
 
 
 @app.get("/")
