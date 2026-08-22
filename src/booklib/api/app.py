@@ -38,10 +38,16 @@ SORTS = {
 }
 
 # Адреса, считающиеся «с самого компьютера». Только для них открыты
-# привилегированные ручки. X-Forwarded-For намеренно игнорируем: прокси перед
-# сервисом нет, и доверять заголовку, который может прийти от любого клиента
-# в сети, нельзя.
+# привилегированные ручки. X-Forwarded-For намеренно игнорируем: доверять
+# заголовку, который может прийти от любого клиента в сети, нельзя.
 LOCAL_HOSTS = frozenset({"127.0.0.1", "::1"})
+
+# Маркер удалённого клиента от доверенного прокси. Может только понизить права
+# (считать запрос удалённым), но никогда не повысить. Подробности — в docstring
+# is_local_request(). Влияет только на require_local; публичные ручки
+# (/api/books, /api/sections, /api/cover, /api/files, /api/download, /api/tags)
+# не зависят от этого маркера.
+PROXY_REMOTE_HEADER = "X-Booklib-Remote"
 
 
 @asynccontextmanager
@@ -139,12 +145,28 @@ def library_mounted() -> bool:
 
 
 def is_local_request(request: Request) -> bool:
-    """Запрос пришёл с самого компьютера (обратная петля), а не из сети."""
+    """Запрос пришёл с самого компьютера (обратная петля), а не из сети.
+
+    Модель доверия: Booklib слушает только loopback, поэтому единственный
+    доверенный прокси — локальный Caddy. Он принудительно ставит заголовок
+    X-Booklib-Remote: 1 для всех проксированных запросов. Этот заголовок
+    может только понизить права (считать запрос удалённым), но никогда не
+    повысить их. Произвольный клиент в сети не может подделать его, потому
+    что Booklib принимает запросы только от loopback.
+
+    Защита от дубликатов: используем getlist() вместо get(), чтобы проверить
+    все значения заголовка. Если хотя бы одно равно "1", считаем запрос
+    удалённым. Это защищает от атаки, когда злоумышленник добавляет
+    X-Booklib-Remote: 0 перед маркером Caddy.
+    """
     client = request.client
     if client is None:
         return False
-    host = client.host
-    return host in LOCAL_HOSTS
+    peer = client.host
+    if peer not in LOCAL_HOSTS:
+        return False
+    # Проверяем все значения заголовка, а не только первое
+    return "1" not in request.headers.getlist(PROXY_REMOTE_HEADER)
 
 
 def require_local(request: Request) -> None:
@@ -575,6 +597,15 @@ def api_set_book_tags(key: str, request: BookTagsRequest) -> dict:
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(get_settings().static_dir / "index.html")
+
+
+@app.get("/sw.js")
+def service_worker() -> FileResponse:
+    return FileResponse(
+        get_settings().static_dir / "sw.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 app.include_router(priv_routes)

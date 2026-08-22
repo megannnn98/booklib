@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="booklib_bg">#14161a</color>
+    <color name="booklib_panel">#1c1f25</color>
+    <color name="booklib_accent">#d8a657</color>
+    <color name="booklib_text">#dfe3ea</color>
+</resources>
