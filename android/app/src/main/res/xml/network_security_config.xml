@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Network Security Configuration для Booklib.
+
+    Доверяет только локальному CA-сертификату для archlinux.local.
+    Системные CA не добавлены, так как приложение работает только с локальным сервером.
+
+    ВНИМАНИЕ: При замене CA-сертификата необходимо:
+    1. Обновить файл res/raw/booklib_ca.crt
+    2. Пересобрать APK
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">archlinux.local</domain>
+        <trust-anchors>
+            <!-- Локальный CA-сертификат для домашней сети -->
+            <certificates src="@raw/booklib_ca" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>
