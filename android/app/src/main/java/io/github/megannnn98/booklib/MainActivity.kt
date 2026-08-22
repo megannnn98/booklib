@@ -38,7 +38,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var downloadStatus: TextView
 
     private var fileDownloader: FileDownloader? = null
-    private var pendingDownload: Triple<String, String, Pair<String?, String>>? = null
+    private var pendingDownload: Triple<String, String, Pair<String?, String?>>? = null
 
     private val baseUrl = "https://archlinux.local/"
     private val navigationPolicy = NavigationPolicy()
@@ -202,7 +202,7 @@ class MainActivity : AppCompatActivity() {
         url: String,
         userAgent: String,
         contentDisposition: String?,
-        mimetype: String
+        mimetype: String?
     ) {
         val decision = navigationPolicy.decide(url)
         if (decision !is NavigationDecision.Internal) {
@@ -229,7 +229,7 @@ class MainActivity : AppCompatActivity() {
         url: String,
         userAgent: String,
         contentDisposition: String?,
-        mimetype: String
+        mimetype: String?
     ) {
         fileDownloader?.cancel()
 

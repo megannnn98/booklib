@@ -31,45 +31,73 @@ class FileDownloader(private val context: Context) {
         url: String,
         userAgent: String,
         contentDisposition: String?,
-        mimeType: String,
+        mimeType: String?,
         listener: DownloadListener
     ) {
         scope.launch {
             var inputStream: InputStream? = null
-            try {
-                val filename = ContentDispositionParser.parseFilename(contentDisposition, url, mimeType)
-                val sanitizedFilename = FilenameSanitizer.sanitize(filename)
+            var filename = FilenameSanitizer.sanitize(
+                ContentDispositionParser.parseFilename(contentDisposition, url, mimeType ?: "")
+            )
 
-                listener.onProgress(sanitizedFilename, 0, null)
+            try {
+                notifyListener(listener, filename, 0, null, null, null)
 
                 val connection = createConnection(url, userAgent)
                 activeConnection = connection
                 connection.connect()
 
                 val responseCode = connection.responseCode
-                if (responseCode != HttpURLConnection.HTTP_OK) {
-                    throw Exception("HTTP $responseCode")
+                if (responseCode !in 200..299) {
+                    if (responseCode in 300..399) {
+                        throw Exception("Редирект не поддерживается (HTTP $responseCode)")
+                    }
+                    throw Exception("HTTP ошибка $responseCode")
                 }
 
-                val contentLength = connection.contentLengthLong.takeIf { it > 0 }
+                val responseContentLength = connection.contentLengthLong.takeIf { it > 0 }
+                val responseContentType = connection.contentType
+                val responseContentDisposition = connection.getHeaderField("Content-Disposition")
+
+                val effectiveFilename = ContentDispositionParser.parseFilename(
+                    responseContentDisposition ?: contentDisposition,
+                    url,
+                    responseContentType ?: mimeType ?: ""
+                )
+                filename = FilenameSanitizer.sanitize(effectiveFilename)
+
+                val effectiveMimeType = responseContentType ?: mimeType ?: "application/octet-stream"
+
                 inputStream = connection.inputStream
 
-                val uri = saveFile(inputStream, sanitizedFilename, mimeType, contentLength, listener)
+                val uri = saveFile(inputStream, filename, effectiveMimeType, responseContentLength, listener)
 
-                listener.onComplete(sanitizedFilename, uri)
+                notifyListener(listener, filename, null, null, uri, null)
 
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                val filename = FilenameSanitizer.sanitize(
-                    ContentDispositionParser.parseFilename(contentDisposition, url, mimeType)
-                )
-                listener.onError(filename, e.message ?: "Неизвестная ошибка")
+                notifyListener(listener, filename, null, null, null, e.message ?: "Неизвестная ошибка")
             } finally {
                 inputStream?.close()
                 activeConnection?.disconnect()
                 activeConnection = null
             }
+        }
+    }
+
+    private suspend fun notifyListener(
+        listener: DownloadListener,
+        filename: String,
+        bytesDownloaded: Long?,
+        totalBytes: Long?,
+        uri: Uri?,
+        error: String?
+    ) = withContext(Dispatchers.Main) {
+        when {
+            error != null -> listener.onError(filename, error)
+            uri != null -> listener.onComplete(filename, uri)
+            else -> listener.onProgress(filename, bytesDownloaded ?: 0, totalBytes)
         }
     }
 
@@ -138,11 +166,13 @@ class FileDownloader(private val context: Context) {
                     outputStream.write(buffer, 0, bytesRead)
                     totalBytesRead += bytesRead
 
-                    withContext(Dispatchers.Main) {
-                        listener.onProgress(filename, totalBytesRead, contentLength)
-                    }
+                    notifyListener(listener, filename, totalBytesRead, contentLength, null, null)
                 }
                 outputStream.flush()
+
+                if (contentLength != null && totalBytesRead != contentLength) {
+                    throw Exception("Неполная загрузка: ожидалось $contentLength байт, получено $totalBytesRead")
+                }
             } ?: throw Exception("Не удалось открыть поток записи")
 
             contentValues.clear()
@@ -201,11 +231,13 @@ class FileDownloader(private val context: Context) {
                     tempStream.write(buffer, 0, bytesRead)
                     totalBytesRead += bytesRead
 
-                    withContext(Dispatchers.Main) {
-                        listener.onProgress(finalFilename, totalBytesRead, contentLength)
-                    }
+                    notifyListener(listener, finalFilename, totalBytesRead, contentLength, null, null)
                 }
                 tempStream.flush()
+
+                if (contentLength != null && totalBytesRead != contentLength) {
+                    throw Exception("Неполная загрузка: ожидалось $contentLength байт, получено $totalBytesRead")
+                }
             }
 
             tempFile.copyTo(file, overwrite = false)
