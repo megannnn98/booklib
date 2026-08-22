@@ -481,6 +481,19 @@ body.remote #settingsBtn, body.remote #rescan, body.remote #tagsAdminBtn, body.r
   }
   body.nav-open #sidebar { transform: translateX(0); }
 
+  /* overlay для закрытия sidebar */
+  #sidebar-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    background: rgba(0, 0, 0, 0.5);
+  }
+  body.nav-open #sidebar-overlay { display: block; }
+
   main { padding: 12px 12px 30px; }
 
   header {

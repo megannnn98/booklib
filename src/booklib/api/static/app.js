@@ -678,6 +678,14 @@ el.filesCancel.addEventListener("click", () => el.files.close());
 el.burger.addEventListener("click", () => {
   document.body.classList.toggle("nav-open");
 });
+
+// Закрытие sidebar при клике на overlay (мобильная версия)
+const sidebarOverlay = document.getElementById("sidebar-overlay");
+if (sidebarOverlay) {
+  sidebarOverlay.addEventListener("click", () => {
+    document.body.classList.remove("nav-open");
+  });
+}
 // Путь изменили после проверки — предпросмотр больше не про него, и применять
 // непроверенное значение нельзя.
 el.sRoot.addEventListener("input", () => {

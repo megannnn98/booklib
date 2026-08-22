@@ -3,7 +3,7 @@
 Service worker и установка PWA требуют **secure context**. `localhost` — исключение,
 но `http://archlinux.local:8765` на телефоне secure context не является.
 
-Решение: Caddy как reverse proxy с локальным CA-сертификатом, сгенерированным через openssl.
+Решение: системный Caddy как reverse proxy с локальным CA-сертификатом.
 
 ## Архитектура
 
@@ -11,11 +11,13 @@ Service worker и установка PWA требуют **secure context**. `loc
 Android-телефон ──HTTPS──▶ Caddy (:443) ──HTTP──▶ Booklib (127.0.0.1:8765)
                                   │
                                   ├── TLS-сертификат от локального CA
-                                  ├── Caddy блокирует привилегированные API для не-loopback
+                                  ├── X-Booklib-Remote: 1 для проксированных запросов
                                   └── CA-сертификат установлен на телефоне
 ```
 
-Booklib продолжает слушать `127.0.0.1:8765` и не знает о TLS.
+Booklib продолжает слушать `127.0.0.1:8765` и не знает о TLS. Caddy принудительно
+ставит заголовок `X-Booklib-Remote: 1` для всех проксированных запросов, чтобы
+Booklib считал их удалёнными (см. `is_local_request()` в `src/booklib/api/app.py`).
 
 ## Обязательные шаги
 
@@ -38,6 +40,9 @@ openssl req -x509 -newkey rsa:2048 -keyout ca-key.pem -out ca-cert.pem \
   -addext "keyUsage=critical,keyCertSign,cRLSign"
 ```
 
+**Важно:** `ca-key.pem` — приватный ключ CA. Не копируйте его в `/etc/caddy` и не
+публикуйте. Он нужен только для подписи серверных сертификатов.
+
 ### 3. Сгенерировать сертификат для хоста
 
 ```bash
@@ -53,74 +58,71 @@ openssl x509 -req -in server-req.pem -CA ca-cert.pem -CAkey ca-key.pem \
   -copy_extensions copyall
 ```
 
-### 4. Конфигурация Caddy
+### 4. Установить серверный сертификат для Caddy
 
-Создать `~/.config/booklib-tls/Caddyfile`:
+```bash
+sudo mkdir -p /etc/caddy/certs
+sudo cp ~/.config/booklib-tls/server-cert.pem /etc/caddy/certs/booklib-server-cert.pem
+sudo cp ~/.config/booklib-tls/server-key.pem /etc/caddy/certs/booklib-server-key.pem
+sudo chown root:caddy /etc/caddy/certs/booklib-server-*.pem
+sudo chmod 640 /etc/caddy/certs/booklib-server-*.pem
+```
+
+**Важно:** копируем только серверный сертификат и серверный приватный ключ. Приватный
+ключ CA (`ca-key.pem`) остаётся в `~/.config/booklib-tls/` и не передаётся Caddy.
+
+### 5. Конфигурация Caddy
+
+Создать `/etc/caddy/Caddyfile`:
 
 ```caddyfile
 https://archlinux.local {
-    tls {$HOME}/.config/booklib-tls/server-cert.pem {$HOME}/.config/booklib-tls/server-key.pem
+    tls /etc/caddy/certs/booklib-server-cert.pem /etc/caddy/certs/booklib-server-key.pem
 
-    # Блокируем привилегированные API для не-loopback клиентов.
-    # Caddy подключается к Booklib с 127.0.0.1, поэтому require_local в Booklib
-    # видит всех проксированных клиентов как локальных. Этот матчер — stopgap
-    # до появления авторизации в Booklib.
-    @privileged {
-        path /api/rescan /api/settings* /api/open /api/book /api/book/* /api/tags /api/tags/*
-        not remote_ip 127.0.0.1 ::1
+    reverse_proxy 127.0.0.1:8765 {
+        header_up X-Booklib-Remote "1"
     }
-    respond @privileged "Forbidden" 403
-
-    reverse_proxy 127.0.0.1:8765
 }
 ```
 
-> **Важно:** без блока `@privileged` любой хост в локальной сети сможет вызывать
-> `/api/open` (запуск процессов), `/api/rescan`, `/api/settings` (смена корня),
-> `/api/book` (правка карточек) и мутации `/api/tags`. Caddy подключается к Booklib
-> с `127.0.0.1`, поэтому `require_local` в Booklib пропускает всех проксированных
-> клиентов. Матчер выше — обязательная часть конфигурации.
+Заголовок `X-Booklib-Remote: 1` сообщает Booklib, что запрос пришёл через прокси
+от удалённого клиента. Booklib использует этот заголовок только для понижения прав
+(считать запрос удалённым), но никогда для повышения.
 
-### 5. Запустить Caddy
+### 6. Проверить конфигурацию
 
-Системный сервис (проще с bind на порт 443):
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile
+```
+
+Ожидаемый вывод: `Valid configuration`.
+
+### 7. Запустить Caddy
 
 ```bash
 sudo systemctl enable --now caddy
 ```
 
-Или user-сервис (требует capabilities для bind на привилегированный порт):
+Проверить состояние:
 
 ```bash
-# Разрешить caddy bind на порт < 1024 без root
-sudo setcap 'cap_net_bind_service=+ep' /usr/bin/caddy
-
-mkdir -p ~/.config/systemd/user
-cat > ~/.config/systemd/user/caddy-pwa.service << 'EOF'
-[Unit]
-Description=Caddy reverse proxy for Booklib PWA
-After=network.target
-
-[Service]
-ExecStart=/usr/bin/caddy run --config %h/.config/booklib-tls/Caddyfile
-Environment=HOME=%h
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-EOF
-
-systemctl --user enable --now caddy-pwa
+sudo systemctl status caddy
 ```
 
-> **Порт 443 в firewall:** убедиться, что порт открыт:
-> ```bash
-> sudo firewall-cmd --permanent --add-service=https
-> sudo firewall-cmd --reload
-> ```
+Просмотр журнала:
 
-### 6. URL для PWA
+```bash
+sudo journalctl -u caddy -n 50 --no-pager
+```
+
+### 8. Открыть порт в firewall (если активен)
+
+```bash
+sudo firewall-cmd --permanent --add-service=https
+sudo firewall-cmd --reload
+```
+
+### 9. URL для PWA
 
 После настройки PWA открывается по адресу:
 
@@ -145,14 +147,22 @@ https://archlinux.local/
 
 После этого Chrome по `https://archlinux.local/` не будет показывать предупреждение о сертификате.
 
-## Опциональные шаги
+## Проверка работы
 
-### Обновление сертификата
+1. На ПК: `http://localhost:8765` — `status.local=true`, административные кнопки видны.
+2. На телефоне: `https://archlinux.local/` — `status.local=false`, административные кнопки скрыты, теги загружаются, клик по книге открывает список файлов для скачивания.
+3. Административные запросы (`/api/open`, `/api/rescan`, `/api/settings`) через Caddy возвращают `403`.
 
-Сертификат выпущен на 825 дней (~2.3 года). Перед истечением повторить шаг 3
-и перезапустить Caddy. Можно добавить cron/systemd-timer.
+## Обновление сертификата
 
-### mDNS-имя
+Сертификат выпущен на 825 дней (~2.3 года). Перед истечением повторить шаги 3–4
+и перезапустить Caddy:
+
+```bash
+sudo systemctl reload caddy
+```
+
+## mDNS-имя
 
 Если `archlinux.local` разрешается через mDNS (Avahi/nss-mdns), дополнительных
 настроек DNS не нужно. Проверить:
@@ -161,51 +171,48 @@ https://archlinux.local/
 getent hosts archlinux.local
 ```
 
-Если не разрешается — установить `nss-mdns` и включить `avahi-daemon`.
-
-### Альтернатива Caddy: nginx + mkcert
-
-Если предпочитаете nginx, можно использовать [`mkcert`](https://github.com/FiloSottile/mkcert)
-для генерации доверенных локальных сертификатов (автоматически устанавливает CA в системное хранилище Linux):
+Если не разрешается — установить `nss-mdns` и включить `avahi-daemon`:
 
 ```bash
-pacman -S mkcert nginx
-mkcert -install
-mkcert archlinux.local
+sudo pacman -S nss-mdns
+sudo systemctl enable --now avahi-daemon
 ```
 
-Конфигурация nginx (с блокировкой привилегированных путей, аналогично Caddy):
+## Безопасность
 
-```nginx
-server {
-    listen 443 ssl;
-    server_name archlinux.local;
+- Приватный ключ CA (`ca-key.pem`) хранится только в `~/.config/booklib-tls/` и не
+  передаётся Caddy или другим сервисам.
+- Серверный приватный ключ (`booklib-server-key.pem`) доступен только пользователю
+  `root` и группе `caddy` (права `640`).
+- `X-Forwarded-For` намеренно игнорируется в Booklib (CLAUDE.md, инвариант №3) —
+  доверие заголовку от произвольного клиента в сети небезопасно.
+- Booklib по-прежнему слушает только `127.0.0.1` — Caddy проксирует локально.
+- `require_local` в Booklib проверяет `request.client.host` и заголовок
+  `X-Booklib-Remote`. За Caddy `client.host` всегда `127.0.0.1`, но заголовок
+  `X-Booklib-Remote: 1` помечает запрос как удалённый.
 
-    ssl_certificate     /home/<user>/.config/booklib-tls/archlinux.local.pem;
-    ssl_certificate_key /home/<user>/.config/booklib-tls/archlinux.local-key.pem;
+### Предположения модели доверия
 
-    # Блокируем привилегированные API для не-loopback клиентов
-    location ~ ^/api/(rescan|settings|open|book|tags) {
-        if ($remote_addr !~ ^(127\.0\.0\.1|::1)$) {
-            return 403;
-        }
-        proxy_pass http://127.0.0.1:8765;
-    }
+Корректность схемы требует двух свойств:
 
-    location / {
-        proxy_pass http://127.0.0.1:8765;
-        proxy_set_header Host $host;
-    }
-}
-```
+1. **Caddy — единственный процесс, способный соединиться с `127.0.0.1:8765`.**
+   Любой другой локальный процесс может отправлять запросы напрямую без маркера
+   и получать полные привилегии. Это допустимо для домашнего ПК, но требует
+   контроля запущенных процессов.
+
+2. **Caddy всегда перезаписывает `X-Booklib-Remote` (не дописывает).**
+   Конструкция `header_up X-Booklib-Remote "1"` заменяет все существующие значения.
+   Если бы Caddy дописывал значение, клиент мог бы подложить `X-Booklib-Remote: 0`
+   перед маркером и обойти проверку. Booklib защищает от этого проверкой всех
+   значений заголовка (`getlist`), но корректная конфигурация Caddy — первичная
+   гарантия.
+
+3. **`BOOKLIB_HOST` остаётся `127.0.0.1` (по умолчанию).**
+   При `BOOKLIB_HOST=0.0.0.0` любой хост сети может соединиться напрямую и
+   подделать заголовок `X-Booklib-Remote`. Эта схема рассчитана на дефолтный host.
 
 ## Ограничения
 
-- Booklib по-прежнему слушает только `127.0.0.1` — Caddy проксирует локально.
-- `require_local` в Booklib проверяет `request.client.host`. За Caddy это `127.0.0.1`
-  для всех клиентов, поэтому **матчер в Caddy (шаг 4) обязателен**. Без него
-  привилегированные API доступны всей локальной сети.
-- `X-Forwarded-For` намеренно игнорируется в Booklib (CLAUDE.md, инвариант №3) —
-  доверие заголовку от произвольного клиента в сети небезопасно. Полноценное
-  решение — авторизация/токены — отдельная задача.
+- Полноценная авторизация/токены — отдельная задача. Текущая схема подходит для
+  домашнего использования без публикации в интернет.
 - Приватные ключи и сертификаты не коммитятся в репозиторий.

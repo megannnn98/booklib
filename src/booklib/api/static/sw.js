@@ -2,7 +2,7 @@
 
 // Инвариант: поднимать версию при ЛЮБОМ изменении файлов из STATIC_ASSETS,
 // иначе cache-first будет раздавать старую статику навсегда.
-const CACHE_VERSION = "booklib-sw-v1";
+const CACHE_VERSION = "booklib-sw-v2";
 
 const STATIC_ASSETS = [
   "/",
@@ -51,7 +51,9 @@ self.addEventListener("activate", (event) => {
     (async () => {
       const keys = await caches.keys();
       await Promise.all(
-        keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k))
+        keys
+          .filter((key) => key.startsWith("booklib-") && key !== CACHE_VERSION)
+          .map((key) => caches.delete(key))
       );
       await self.clients.claim();
     })()

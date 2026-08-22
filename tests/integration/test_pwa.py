@@ -8,6 +8,9 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from booklib.api.app import app
+from booklib.db import connect
+from booklib.grouping import collect_groups
+from booklib.scanner import sync
 from tests.conftest import make_book
 
 
@@ -186,3 +189,175 @@ def test_sw_not_cached_by_browser() -> None:
     r = client().get("/sw.js")
     cc = r.headers.get("Cache-Control", "")
     assert "no-cache" in cc or "no-store" in cc
+
+
+def test_service_worker_cache_cleanup_uses_prefix() -> None:
+    """SW должен удалять только кэши с префиксом booklib-, не трогать чужие."""
+    sw = client().get("/sw.js").text
+    assert 'startsWith("booklib-")' in sw
+
+
+# ---------- прокси-заголовок и определение клиента ----------
+
+
+def test_direct_loopback_is_local() -> None:
+    """Прямой loopback без proxy-маркера → local=true."""
+    c = client()
+    status = c.get("/api/status").json()
+    assert status["local"] is True
+
+
+def test_loopback_with_proxy_header_is_remote() -> None:
+    """Loopback с X-Booklib-Remote: 1 → local=false (проксированный удалённый)."""
+    c = client()
+    status = c.get("/api/status", headers={"X-Booklib-Remote": "1"}).json()
+    assert status["local"] is False
+
+
+def test_remote_ip_without_header_is_remote() -> None:
+    """Удалённый IP без маркера → local=false."""
+    r = remote()
+    status = r.get("/api/status").json()
+    assert status["local"] is False
+
+
+def test_remote_ip_cannot_fake_local_with_header() -> None:
+    """Удалённый IP не может повысить права поддельным заголовком."""
+    r = remote()
+    status = r.get("/api/status", headers={"X-Booklib-Remote": "0"}).json()
+    assert status["local"] is False
+
+
+def test_duplicate_header_cannot_bypass_proxy_marker() -> None:
+    """Дублирующий заголовок X-Booklib-Remote: 0 перед 1 не обходит маркер.
+
+    Защита от атаки: если клиент добавляет X-Booklib-Remote: 0 перед маркером
+    Caddy (1), getlist() проверяет все значения и всё равно считает запрос
+    удалённым, если хотя бы одно значение равно "1".
+    """
+    c = client()
+    # httpx позволяет передать список значений для одного заголовка
+    status = c.get(
+        "/api/status",
+        headers=[("X-Booklib-Remote", "0"), ("X-Booklib-Remote", "1")],
+    ).json()
+    assert status["local"] is False
+
+
+def test_duplicate_header_reverse_order_also_remote() -> None:
+    """Дублирующий заголовок в обратном порядке (1, 0) тоже считается удалённым."""
+    c = client()
+    status = c.get(
+        "/api/status",
+        headers=[("X-Booklib-Remote", "1"), ("X-Booklib-Remote", "0")],
+    ).json()
+    assert status["local"] is False
+
+
+def test_proxied_request_hides_absolute_paths() -> None:
+    """Проксированный запрос не получает абсолютные пути root и db."""
+    c = client()
+    status = c.get("/api/status", headers={"X-Booklib-Remote": "1"}).json()
+    assert "root" not in status
+    assert "db" not in status
+
+
+# ---------- доступ к API для проксированного удалённого клиента ----------
+
+
+def test_proxied_remote_can_read_tags(library: Path) -> None:
+    """Проксированный удалённый клиент может читать теги (GET /api/tags)."""
+    make_book(library, "a.pdf")
+    c = client()
+    r = c.get("/api/tags", headers={"X-Booklib-Remote": "1"})
+    assert r.status_code == 200
+
+
+def test_proxied_remote_can_read_catalog(library: Path) -> None:
+    """Проксированный удалённый клиент может читать каталог."""
+    make_book(library, "a.pdf")
+    c = client()
+    r = c.get("/api/books", headers={"X-Booklib-Remote": "1"})
+    assert r.status_code == 200
+
+
+def test_proxied_remote_can_download(library: Path) -> None:
+    """Проксированный удалённый клиент может скачивать файлы."""
+    make_book(library, "math/Книга.pdf", b"%PDF-1.4 fake\n%%EOF\n")
+    conn = connect()
+    sync(conn, collect_groups())
+    conn.commit()
+    conn.close()
+
+    c = client()
+    r = c.get(
+        "/api/download",
+        params={"key": "math/Книга", "file": "math/Книга.pdf"},
+        headers={"X-Booklib-Remote": "1"},
+    )
+    assert r.status_code == 200
+
+
+def test_proxied_remote_blocked_from_open(library: Path) -> None:
+    """Проксированный удалённый клиент не может вызывать /api/open."""
+    make_book(library, "a.pdf")
+    c = client()
+    r = c.post("/api/open", json={"key": "a"}, headers=OWN_PAGE | {"X-Booklib-Remote": "1"})
+    assert r.status_code == 403
+
+
+def test_proxied_remote_blocked_from_rescan(library: Path) -> None:
+    """Проксированный удалённый клиент не может вызывать /api/rescan."""
+    c = client()
+    r = c.post("/api/rescan", headers=OWN_PAGE | {"X-Booklib-Remote": "1"})
+    assert r.status_code == 403
+
+
+def test_proxied_remote_blocked_from_settings(library: Path) -> None:
+    """Проксированный удалённый клиент не может читать/менять настройки."""
+    c = client()
+    r = c.get("/api/settings", headers=OWN_PAGE | {"X-Booklib-Remote": "1"})
+    assert r.status_code == 403
+    r = c.post("/api/settings", json={"root": "/tmp"}, headers=OWN_PAGE | {"X-Booklib-Remote": "1"})
+    assert r.status_code == 403
+
+
+def test_proxied_remote_blocked_from_edit_book(library: Path) -> None:
+    """Проксированный удалённый клиент не может править книги."""
+    make_book(library, "a.pdf")
+    c = client()
+    r = c.post(
+        "/api/book",
+        json={"key": "a", "title": "Правка"},
+        headers=OWN_PAGE | {"X-Booklib-Remote": "1"},
+    )
+    assert r.status_code == 403
+
+
+def test_proxied_remote_blocked_from_tag_mutations(library: Path) -> None:
+    """Проксированный удалённый клиент не может создавать/менять/удалять теги."""
+    c = client()
+    headers = OWN_PAGE | {"X-Booklib-Remote": "1"}
+    r = c.post("/api/tags", json={"name": "test"}, headers=headers)
+    assert r.status_code == 403
+    r = c.put("/api/tags/1", json={"name": "test"}, headers=headers)
+    assert r.status_code == 403
+    r = c.delete("/api/tags/1", headers=headers)
+    assert r.status_code == 403
+
+
+def test_direct_loopback_can_edit_book(library: Path) -> None:
+    """Прямой loopback без маркера сохраняет административные возможности."""
+    make_book(library, "math/Книга.pdf", b"%PDF-1.4 fake\n%%EOF\n")
+    conn = connect()
+    sync(conn, collect_groups())
+    conn.commit()
+    conn.close()
+
+    c = client()
+    r = c.post(
+        "/api/book",
+        json={"key": "math/Книга", "title": "Правка"},
+        headers=OWN_PAGE,
+    )
+    assert r.status_code == 200  # прямой loopback имеет права на редактирование
