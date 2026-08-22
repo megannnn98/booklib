@@ -18,6 +18,62 @@
         android:visibility="gone" />
 
     <FrameLayout
+        android:id="@+id/downloadOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#CC14161a"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="32dp"
+            android:minWidth="280dp">
+
+            <TextView
+                android:id="@+id/downloadTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#d8a657"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:text="Загрузка" />
+
+            <TextView
+                android:id="@+id/downloadFilename"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textColor="#dfe3ea"
+                android:textSize="14sp"
+                android:gravity="center"
+                android:maxLines="2"
+                android:ellipsize="middle" />
+
+            <ProgressBar
+                android:id="@+id/downloadProgress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:indeterminate="false"
+                android:progressTint="#d8a657"
+                android:progressBackgroundTint="#2f343d" />
+
+            <TextView
+                android:id="@+id/downloadStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textColor="#8b93a3"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <FrameLayout
         android:id="@+id/errorLayout"
         android:layout_width="match_parent"
         android:layout_height="match_parent"

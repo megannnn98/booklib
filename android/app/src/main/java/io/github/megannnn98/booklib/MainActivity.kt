@@ -1,18 +1,15 @@
 package io.github.megannnn98.booklib
 
 import android.annotation.SuppressLint
-import android.app.DownloadManager
 import android.content.ActivityNotFoundException
-import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.SslErrorHandler
-import android.webkit.URLUtil
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -34,8 +31,21 @@ class MainActivity : AppCompatActivity() {
     private lateinit var errorText: TextView
     private lateinit var retryButton: Button
 
+    private lateinit var downloadOverlay: FrameLayout
+    private lateinit var downloadTitle: TextView
+    private lateinit var downloadFilename: TextView
+    private lateinit var downloadProgress: ProgressBar
+    private lateinit var downloadStatus: TextView
+
+    private var fileDownloader: FileDownloader? = null
+    private var pendingDownload: Triple<String, String, Pair<String?, String>>? = null
+
     private val baseUrl = "https://archlinux.local/"
     private val navigationPolicy = NavigationPolicy()
+
+    companion object {
+        private const val REQUEST_STORAGE_PERMISSION = 1001
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -49,6 +59,12 @@ class MainActivity : AppCompatActivity() {
         errorLayout = findViewById(R.id.errorLayout)
         errorText = findViewById(R.id.errorText)
         retryButton = findViewById(R.id.retryButton)
+
+        downloadOverlay = findViewById(R.id.downloadOverlay)
+        downloadTitle = findViewById(R.id.downloadTitle)
+        downloadFilename = findViewById(R.id.downloadFilename)
+        downloadProgress = findViewById(R.id.downloadProgress)
+        downloadStatus = findViewById(R.id.downloadStatus)
 
         setupWebView()
 
@@ -188,38 +204,122 @@ class MainActivity : AppCompatActivity() {
         contentDisposition: String?,
         mimetype: String
     ) {
-        try {
-            val decision = navigationPolicy.decide(url)
-            if (decision !is NavigationDecision.Internal) {
-                Toast.makeText(this, "Скачивание разрешено только с archlinux.local", Toast.LENGTH_SHORT).show()
+        val decision = navigationPolicy.decide(url)
+        if (decision !is NavigationDecision.Internal) {
+            Toast.makeText(this, "Скачивание разрешено только с archlinux.local", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            if (checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(
+                    arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                    REQUEST_STORAGE_PERMISSION
+                )
+                pendingDownload = Triple(url, userAgent, contentDisposition to mimetype)
                 return
             }
+        }
 
-            val filename = FilenameSanitizer.sanitize(
-                URLUtil.guessFileName(url, contentDisposition, mimetype)
-            )
+        startDownload(url, userAgent, contentDisposition, mimetype)
+    }
 
-            val request = DownloadManager.Request(Uri.parse(url)).apply {
-                setMimeType(mimetype)
-                addRequestHeader("User-Agent", userAgent)
+    private fun startDownload(
+        url: String,
+        userAgent: String,
+        contentDisposition: String?,
+        mimetype: String
+    ) {
+        fileDownloader?.cancel()
 
-                val cookies = CookieManager.getInstance().getCookie(url)
-                if (!cookies.isNullOrEmpty()) {
-                    addRequestHeader("Cookie", cookies)
+        val downloader = FileDownloader(this)
+        fileDownloader = downloader
+
+        showDownloadOverlay("Подготовка...")
+
+        downloader.download(
+            url = url,
+            userAgent = userAgent,
+            contentDisposition = contentDisposition,
+            mimeType = mimetype,
+            listener = object : FileDownloader.DownloadListener {
+                override fun onProgress(filename: String, bytesDownloaded: Long, totalBytes: Long?) {
+                    updateDownloadProgress(filename, bytesDownloaded, totalBytes)
                 }
 
-                setTitle(filename)
-                setDescription("Загрузка из Booklib")
-                setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename)
-            }
+                override fun onComplete(filename: String, uri: Uri?) {
+                    hideDownloadOverlay()
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Сохранено: $filename",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    fileDownloader = null
+                }
 
-            val downloadManager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            downloadManager.enqueue(request)
-            Toast.makeText(this, "Загрузка начата: $filename", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            Toast.makeText(this, "Ошибка загрузки: ${e.message}", Toast.LENGTH_LONG).show()
+                override fun onError(filename: String, error: String) {
+                    hideDownloadOverlay()
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Ошибка загрузки: $error",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    fileDownloader = null
+                }
+            }
+        )
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_STORAGE_PERMISSION) {
+            if (grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                pendingDownload?.let { (url, userAgent, extra) ->
+                    startDownload(url, userAgent, extra.first, extra.second)
+                    pendingDownload = null
+                }
+            } else {
+                Toast.makeText(
+                    this,
+                    "Для сохранения файлов требуется разрешение на запись",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
+    }
+
+    private fun showDownloadOverlay(status: String) {
+        downloadOverlay.visibility = View.VISIBLE
+        downloadStatus.text = status
+        downloadProgress.isIndeterminate = true
+    }
+
+    private fun updateDownloadProgress(filename: String, bytesDownloaded: Long, totalBytes: Long?) {
+        downloadFilename.text = filename
+
+        if (totalBytes != null && totalBytes > 0) {
+            downloadProgress.isIndeterminate = false
+            downloadProgress.max = 100
+            val percent = ((bytesDownloaded * 100) / totalBytes).toInt()
+            downloadProgress.progress = percent
+
+            val downloadedMb = bytesDownloaded / (1024.0 * 1024.0)
+            val totalMb = totalBytes / (1024.0 * 1024.0)
+            downloadStatus.text = String.format("%.1f / %.1f МБ (%d%%)", downloadedMb, totalMb, percent)
+        } else {
+            downloadProgress.isIndeterminate = true
+            val downloadedMb = bytesDownloaded / (1024.0 * 1024.0)
+            downloadStatus.text = String.format("%.1f МБ", downloadedMb)
+        }
+    }
+
+    private fun hideDownloadOverlay() {
+        downloadOverlay.visibility = View.GONE
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -253,6 +353,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        fileDownloader?.cancel()
         webView.destroy()
         super.onDestroy()
     }
