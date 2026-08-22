@@ -577,5 +577,14 @@ def index() -> FileResponse:
     return FileResponse(get_settings().static_dir / "index.html")
 
 
+@app.get("/sw.js")
+def service_worker() -> FileResponse:
+    return FileResponse(
+        get_settings().static_dir / "sw.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 app.include_router(priv_routes)
 app.mount("/static", StaticFiles(directory=get_settings().static_dir), name="static")

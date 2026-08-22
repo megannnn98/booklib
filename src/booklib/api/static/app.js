@@ -708,3 +708,42 @@ el.rescan.addEventListener("click", async () => {
     toast(`Не удалось загрузить каталог: ${error.message}`, true);
   }
 })();
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch((error) => {
+      console.warn("serviceWorker registration failed:", error);
+    });
+  });
+}
+
+(function installPrompt() {
+  const isStandalone =
+    window.matchMedia("(display-mode: standalone)").matches ||
+    window.navigator.standalone === true;
+  if (isStandalone) return;
+
+  const btn = document.getElementById("installBtn");
+  if (!btn) return;
+
+  let deferredPrompt = null;
+
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    btn.hidden = false;
+  });
+
+  btn.addEventListener("click", async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    deferredPrompt = null;
+    btn.hidden = true;
+  });
+
+  window.addEventListener("appinstalled", () => {
+    btn.hidden = true;
+    deferredPrompt = null;
+  });
+})();

@@ -516,3 +516,23 @@ body.remote #settingsBtn, body.remote #rescan, body.remote #tagsAdminBtn, body.r
   }
   #files-list a { padding: 12px; min-height: 44px; }
 }
+
+/* ---------- кнопка установки PWA ---------- */
+
+#installBtn {
+  position: fixed;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  right: 16px;
+  z-index: 100;
+  padding: 10px 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  transition: opacity 0.2s;
+}
+#installBtn:hover { background: var(--panel-hi); }
