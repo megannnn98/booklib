@@ -274,6 +274,10 @@ def serve(
         port=port or settings.port,
         reload=reload,
         log_level="warning",
+        # Caddy проставляет X-Forwarded-For автоматически. Права Booklib
+        # определяет только по непосредственному peer, поэтому не позволяем
+        # Uvicorn заменить loopback-peer значением этого заголовка.
+        proxy_headers=False,
     )
 
 

@@ -38,16 +38,19 @@ SORTS = {
 }
 
 # Адреса, считающиеся «с самого компьютера». Только для них открыты
-# привилегированные ручки. X-Forwarded-For намеренно игнорируем: доверять
-# заголовку, который может прийти от любого клиента в сети, нельзя.
+# привилегированные ручки. X-Forwarded-* не влияет на определение peer и может
+# только понизить права markerless-запроса, прошедшего через Caddy.
 LOCAL_HOSTS = frozenset({"127.0.0.1", "::1"})
 
-# Маркер удалённого клиента от доверенного прокси. Может только понизить права
-# (считать запрос удалённым), но никогда не повысить. Подробности — в docstring
-# is_local_request(). Влияет только на require_local; публичные ручки
-# (/api/books, /api/sections, /api/cover, /api/files, /api/download, /api/tags)
-# не зависят от этого маркера.
+# Маркеры от локального Caddy. Remote понижает права, Admin повышает их только
+# для loopback-peer; подробности — в docstring is_local_request(). Они влияют
+# только на require_local; публичные ручки (/api/books, /api/sections,
+# /api/cover, /api/files, /api/download, /api/tags) от них не зависят.
 PROXY_REMOTE_HEADER = "X-Booklib-Remote"
+PROXY_ADMIN_HEADER = "X-Booklib-Admin"
+# Caddy reverse_proxy always adds these. With proxy_headers=False they remain
+# evidence that the loopback peer is a proxy, not an input to peer resolution.
+FORWARDED_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-forwarded-proto")
 
 
 @asynccontextmanager
@@ -147,26 +150,27 @@ def library_mounted() -> bool:
 def is_local_request(request: Request) -> bool:
     """Запрос пришёл с самого компьютера (обратная петля), а не из сети.
 
-    Модель доверия: Booklib слушает только loopback, поэтому единственный
-    доверенный прокси — локальный Caddy. Он принудительно ставит заголовок
-    X-Booklib-Remote: 1 для всех проксированных запросов. Этот заголовок
-    может только понизить права (считать запрос удалённым), но никогда не
-    повысить их. Произвольный клиент в сети не может подделать его, потому
-    что Booklib принимает запросы только от loopback.
+    Модель доверия: Booklib слушает только loopback, поэтому доверять
+    X-Booklib-Admin можно только локальному Caddy. Caddy сначала удаляет
+    присланные клиентом маркеры, затем ставит Admin для доверенной LAN и
+    Remote для всех остальных. Удалённый peer не может повысить права
+    поддельным Admin или X-Forwarded-For.
 
-    Защита от дубликатов: используем getlist() вместо get(), чтобы проверить
-    все значения заголовка. Если хотя бы одно равно "1", считаем запрос
-    удалённым. Это защищает от атаки, когда злоумышленник добавляет
-    X-Booklib-Remote: 0 перед маркером Caddy.
+    Remote имеет приоритет над Admin: дубликаты или противоречивые маркеры
+    fail closed. Проксированный loopback без Admin тоже read-only: это не
+    позволяет ошибке в конфигурации Caddy открыть административные ручки.
+    Прямой loopback без forwarded-заголовков остаётся административным.
     """
     client = request.client
     if client is None:
         return False
-    peer = client.host
-    if peer not in LOCAL_HOSTS:
+    if client.host not in LOCAL_HOSTS:
         return False
-    # Проверяем все значения заголовка, а не только первое
-    return "1" not in request.headers.getlist(PROXY_REMOTE_HEADER)
+    if "1" in request.headers.getlist(PROXY_REMOTE_HEADER):
+        return False
+    if "1" in request.headers.getlist(PROXY_ADMIN_HEADER):
+        return True
+    return not any(header in request.headers for header in FORWARDED_HEADERS)
 
 
 def require_local(request: Request) -> None:
@@ -408,6 +412,7 @@ def api_download(request: Request, key: str, file: str) -> FileResponse:
     # целиком не дублируем (они уже в ответе).
     print(
         f"download ip={request.client.host if request.client else '?'} "
+        f"fwd={request.headers.get('x-forwarded-for', '-')} "
         f"key={key} file={file} size={size}",
         file=sys.stderr,
         flush=True,

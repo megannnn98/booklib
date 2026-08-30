@@ -23,6 +23,7 @@ def remote() -> TestClient:
 
 
 OWN_PAGE = {"X-Booklib": "1"}
+PROXIED = {"X-Forwarded-For": "192.168.0.50"}
 
 
 def _png_dimensions(path: Path) -> tuple[int, int]:
@@ -207,6 +208,36 @@ def test_direct_loopback_is_local() -> None:
     assert status["local"] is True
 
 
+def test_trusted_proxy_is_local_and_keeps_admin_controls() -> None:
+    """Caddy допускает только доверенную LAN и передаёт Admin с loopback-peer."""
+    c = client()
+    headers = OWN_PAGE | PROXIED | {"X-Booklib-Admin": "1"}
+    status = c.get("/api/status", headers=headers).json()
+    assert status["local"] is True
+    assert "root" in status and "db" in status
+    assert c.get("/api/settings", headers=headers).status_code == 200
+
+    index = c.get("/").text
+    for control_id in ("settingsBtn", "tagsAdminBtn", "rescan"):
+        assert f'id="{control_id}"' in index
+
+
+def test_proxied_request_without_marker_is_remote() -> None:
+    """Прокси без собственного маркера fail-closed и не открывает admin API."""
+    c = client()
+    status = c.get("/api/status", headers=PROXIED).json()
+    assert status["local"] is False
+    assert "root" not in status and "db" not in status
+    assert c.get("/api/settings", headers=OWN_PAGE | PROXIED).status_code == 403
+
+
+def test_remote_marker_beats_admin_marker() -> None:
+    """Противоречивые Caddy-маркеры не дают административных прав."""
+    c = client()
+    headers = PROXIED | {"X-Booklib-Admin": "1", "X-Booklib-Remote": "1"}
+    assert c.get("/api/status", headers=headers).json()["local"] is False
+
+
 def test_loopback_with_proxy_header_is_remote() -> None:
     """Loopback с X-Booklib-Remote: 1 → local=false (проксированный удалённый)."""
     c = client()
@@ -226,6 +257,22 @@ def test_remote_ip_cannot_fake_local_with_header() -> None:
     r = remote()
     status = r.get("/api/status", headers={"X-Booklib-Remote": "0"}).json()
     assert status["local"] is False
+
+
+def test_non_loopback_cannot_fake_admin_header() -> None:
+    """Admin-маркер от клиента, который не является локальным Caddy, не доверяется."""
+    r = remote()
+    headers = OWN_PAGE | {"X-Booklib-Admin": "1"}
+    assert r.get("/api/status", headers=headers).json()["local"] is False
+    assert r.post("/api/rescan", headers=headers).status_code == 403
+
+
+def test_forwarded_for_cannot_fake_trusted_proxy() -> None:
+    """X-Forwarded-For не является источником прав, даже если указывает loopback."""
+    r = remote()
+    headers = OWN_PAGE | {"X-Forwarded-For": "127.0.0.1", "X-Booklib-Admin": "1"}
+    assert r.get("/api/status", headers=headers).json()["local"] is False
+    assert r.post("/api/rescan", headers=headers).status_code == 403
 
 
 def test_duplicate_header_cannot_bypass_proxy_marker() -> None:

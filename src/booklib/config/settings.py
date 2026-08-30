@@ -237,6 +237,10 @@ class Settings(BaseSettings):
         return self.resolve_config_file("rules.json")[0]
 
     @property
+    def tag_rules_path(self) -> Path:
+        return self.resolve_config_file("tag_rules.json")[0]
+
+    @property
     def static_dir(self) -> Path:
         return PACKAGE_DIR / "api" / "static"
 

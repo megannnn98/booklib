@@ -11,13 +11,14 @@ Service worker и установка PWA требуют **secure context**. `loc
 Android-телефон ──HTTPS──▶ Caddy (:443) ──HTTP──▶ Booklib (127.0.0.1:8765)
                                   │
                                   ├── TLS-сертификат от локального CA
-                                  ├── X-Booklib-Remote: 1 для проксированных запросов
+                                  ├── Admin только для 192.168.0.0/24
+                                  ├── Remote для остальных клиентов
                                   └── CA-сертификат установлен на телефоне
 ```
 
-Booklib продолжает слушать `127.0.0.1:8765` и не знает о TLS. Caddy принудительно
-ставит заголовок `X-Booklib-Remote: 1` для всех проксированных запросов, чтобы
-Booklib считал их удалёнными (см. `is_local_request()` в `src/booklib/api/app.py`).
+Booklib продолжает слушать `127.0.0.1:8765` и не знает о TLS. Caddy удаляет
+присланные клиентом маркеры и сам выдаёт `X-Booklib-Admin: 1` только клиентам
+доверенной LAN `192.168.0.0/24`; остальные получают `X-Booklib-Remote: 1`.
 
 ## Обязательные шаги
 
@@ -73,21 +74,39 @@ sudo chmod 640 /etc/caddy/certs/booklib-server-*.pem
 
 ### 5. Конфигурация Caddy
 
-Создать `/etc/caddy/Caddyfile`:
+Создать `/etc/caddy/conf.d/booklib.conf` (он импортируется стандартным
+`/etc/caddy/Caddyfile`):
 
 ```caddyfile
 https://archlinux.local {
     tls /etc/caddy/certs/booklib-server-cert.pem /etc/caddy/certs/booklib-server-key.pem
 
-    reverse_proxy 127.0.0.1:8765 {
-        header_up X-Booklib-Remote "1"
+    # Только домашняя LAN, не Docker-подсети.
+    @trusted_lan remote_ip 192.168.0.0/24
+
+    handle @trusted_lan {
+        # Отдельный обработчик: удалить маркеры ДО reverse_proxy.
+        request_header -X-Booklib-Admin
+        request_header -X-Booklib-Remote
+        reverse_proxy 127.0.0.1:8765 {
+            header_up X-Booklib-Admin "1"
+        }
+    }
+
+    handle {
+        # Отдельный обработчик: удалить маркеры ДО reverse_proxy.
+        request_header -X-Booklib-Admin
+        request_header -X-Booklib-Remote
+        reverse_proxy 127.0.0.1:8765 {
+            header_up X-Booklib-Remote "1"
+        }
     }
 }
 ```
 
-Заголовок `X-Booklib-Remote: 1` сообщает Booklib, что запрос пришёл через прокси
-от удалённого клиента. Booklib использует этот заголовок только для понижения прав
-(считать запрос удалённым), но никогда для повышения.
+`remote_ip` использует IP TCP-клиента Caddy, а не `X-Forwarded-For`. Поэтому
+заголовки клиента не могут сами выдать права. Для смены доверенной сети меняйте
+только CIDR в `@trusted_lan` и повторно валидируйте конфигурацию.
 
 ### 6. Проверить конфигурацию
 
@@ -149,9 +168,12 @@ https://archlinux.local/
 
 ## Проверка работы
 
-1. На ПК: `http://localhost:8765` — `status.local=true`, административные кнопки видны.
-2. На телефоне: `https://archlinux.local/` — `status.local=false`, административные кнопки скрыты, теги загружаются, клик по книге открывает список файлов для скачивания.
-3. Административные запросы (`/api/open`, `/api/rescan`, `/api/settings`) через Caddy возвращают `403`.
+1. На ПК: `http://localhost:8765/api/status` возвращает `local: true`; настройки,
+   словарь тегов и «Обновить» видны.
+2. На устройстве с IP из `192.168.0.0/24`: `https://archlinux.local/api/status`
+   возвращает `local: true`; тот же полный интерфейс и административные API доступны.
+3. На устройстве вне этой подсети: статус возвращает `local: false`; интерфейс
+   read-only, а `/api/open`, `/api/rescan` и `/api/settings` отвечают `403`.
 
 ## Обновление сертификата
 
@@ -171,6 +193,23 @@ sudo systemctl reload caddy
 getent hosts archlinux.local
 ```
 
+Адрес должен быть LAN-адресом `192.168.0.0/24`, а не адресом Docker
+`172.16.0.0/12`. IPv6 mDNS отключён намеренно: Caddy принимает административные
+запросы только из доверенной IPv4-подсети. На этом хосте LAN-интерфейс — `enp8s0`;
+в `/etc/avahi/avahi-daemon.conf` задайте:
+
+```ini
+[server]
+allow-interfaces=enp8s0
+use-ipv6=no
+
+[publish]
+publish-aaaa-on-ipv4=no
+```
+
+Затем выполните `sudo systemctl reload avahi-daemon` и повторите `getent hosts
+archlinux.local`.
+
 Если не разрешается — установить `nss-mdns` и включить `avahi-daemon`:
 
 ```bash
@@ -184,35 +223,43 @@ sudo systemctl enable --now avahi-daemon
   передаётся Caddy или другим сервисам.
 - Серверный приватный ключ (`booklib-server-key.pem`) доступен только пользователю
   `root` и группе `caddy` (права `640`).
-- `X-Forwarded-For` намеренно игнорируется в Booklib (CLAUDE.md, инвариант №3) —
-  доверие заголовку от произвольного клиента в сети небезопасно.
+- `X-Forwarded-For` и `X-Forwarded-Host` намеренно игнорируются в Booklib:
+  запуск Uvicorn выполняется с `proxy_headers=False`, поэтому они не могут
+  заменить непосредственный loopback-peer и дать произвольному клиенту
+  административные права.
 - Booklib по-прежнему слушает только `127.0.0.1` — Caddy проксирует локально.
-- `require_local` в Booklib проверяет `request.client.host` и заголовок
-  `X-Booklib-Remote`. За Caddy `client.host` всегда `127.0.0.1`, но заголовок
-  `X-Booklib-Remote: 1` помечает запрос как удалённый.
+- `require_local` в Booklib сначала требует `request.client.host` из loopback,
+  затем обрабатывает маркеры Caddy. `X-Booklib-Remote: 1` имеет приоритет и
+  переводит клиента в read-only; `X-Booklib-Admin: 1` принимается только от
+  loopback-peer. Loopback-запрос с `X-Forwarded-*`, но без Admin, тоже
+  read-only: пропущенный маркер Caddy не открывает административный API.
+  Прямой localhost без forwarded-заголовков остаётся административным.
 
 ### Предположения модели доверия
 
-Корректность схемы требует двух свойств:
+Корректность схемы требует трёх свойств:
 
 1. **Caddy — единственный процесс, способный соединиться с `127.0.0.1:8765`.**
    Любой другой локальный процесс может отправлять запросы напрямую без маркера
    и получать полные привилегии. Это допустимо для домашнего ПК, но требует
    контроля запущенных процессов.
 
-2. **Caddy всегда перезаписывает `X-Booklib-Remote` (не дописывает).**
-   Конструкция `header_up X-Booklib-Remote "1"` заменяет все существующие значения.
-   Если бы Caddy дописывал значение, клиент мог бы подложить `X-Booklib-Remote: 0`
-   перед маркером и обойти проверку. Booklib защищает от этого проверкой всех
-   значений заголовка (`getlist`), но корректная конфигурация Caddy — первичная
-   гарантия.
+2. **Caddy всегда сначала удаляет оба входящих маркера.**
+   `request_header -X-Booklib-Admin` и `request_header -X-Booklib-Remote` —
+   отдельный обработчик перед `reverse_proxy`. Только затем `header_up` ставит
+   единственный маркер ветки. Нельзя помещать delete и set одного поля в один
+   `reverse_proxy`: Caddy применяет delete после set.
 
-3. **`BOOKLIB_HOST` остаётся `127.0.0.1` (по умолчанию).**
-   При `BOOKLIB_HOST=0.0.0.0` любой хост сети может соединиться напрямую и
-   подделать заголовок `X-Booklib-Remote`. Эта схема рассчитана на дефолтный host.
+3. **`BOOKLIB_HOST` остаётся `127.0.0.1`.**
+   Это defence in depth: не-loopback peer всё равно не проходит проверку
+   Booklib, но привязка исключает прямой сетевой путь в обход Caddy и снижает
+   последствия будущей ошибки в обработке peer.
 
 ## Ограничения
 
 - Полноценная авторизация/токены — отдельная задача. Текущая схема подходит для
   домашнего использования без публикации в интернет.
 - Приватные ключи и сертификаты не коммитятся в репозиторий.
+- `proxy_headers=False` намеренно не даёт Starlette использовать
+  `X-Forwarded-Proto`. Если в будущем появится маршрут с автоматически
+  построенным абсолютным redirect, его нужно отдельно проверить под HTTPS.

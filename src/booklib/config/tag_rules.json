@@ -1,0 +1,286 @@
+{
+ "_comment": "Правила автоматической расстановки тегов. В отличие от rules.json (разделы) срабатывают ВСЕ подходящие правила, а не первое. Матчинг регистронезависимый по имени файла + названию + автору карточки; папка игнорируется намеренно. Тег, которого ещё нет в словаре, создаётся при первом срабатывании.",
+ "rules": [
+  {
+   "_note": "Форма документа. Голое имя чипа сюда не входит — иначе книга про STM32 стала бы даташитом.",
+   "tag": "даташит",
+   "kind": "form",
+   "pattern": "datasheet|reference manual|programming manual|application note|errata|release notes|\\bds\\d{3,}"
+  },
+  {
+   "tag": "руководство",
+   "kind": "form",
+   "pattern": "user manual|user guide|user guidelines|руководство|инструкция по эксплуатац"
+  },
+  {
+   "tag": "справочник",
+   "kind": "form",
+   "pattern": "handbook|cheat sheet|справочник|энциклопеди"
+  },
+  {
+   "tag": "лекции",
+   "kind": "form",
+   "pattern": "lecture|slides|course\\b|конспект|семинар|лекци|week[_ ]?\\d|assignment"
+  },
+  {
+   "tag": "учебник",
+   "kind": "form",
+   "pattern": "учебник|учебное пособие|самоучитель|textbook|for dummies|введение в|introduction to|пособие для начинающих|начальный курс|вводный курс"
+  },
+  {
+   "tag": "задачник",
+   "kind": "form",
+   "pattern": "задач|problems and solutions|solutions manual|\\bsm for\\b|exercises|олимпиад"
+  },
+  {
+   "tag": "схемы",
+   "kind": "form",
+   "pattern": "schematic|\\bsch\\b|orcad|splan|spl7|netlist"
+  },
+
+  {
+   "tag": "STM32",
+   "kind": "technology",
+   "pattern": "stm32|stm8|spc58"
+  },
+  {
+   "tag": "AVR",
+   "kind": "technology",
+   "pattern": "\\bavr\\b|atmega|attiny|codevision"
+  },
+  {
+   "tag": "nRF52",
+   "kind": "technology",
+   "pattern": "nrf52|nordic semiconductor|softdevice|\\bs140\\b|zswatch"
+  },
+  {
+   "tag": "Arduino",
+   "kind": "technology",
+   "pattern": "arduino"
+  },
+  {
+   "tag": "BeagleBone",
+   "kind": "technology",
+   "pattern": "beaglebone|beagle bone|\\bbbone\\b"
+  },
+  {
+   "tag": "FreeRTOS",
+   "kind": "technology",
+   "pattern": "freertos"
+  },
+  {
+   "tag": "Zephyr",
+   "kind": "technology",
+   "pattern": "zephyr"
+  },
+  {
+   "tag": "Linux",
+   "kind": "technology",
+   "pattern": "\\blinux\\b|\\bunix\\b|posix|buildroot|yocto|busybox|systemd|kernel"
+  },
+  {
+   "tag": "FPGA",
+   "kind": "technology",
+   "pattern": "\\bfpga\\b|vhdl|verilog|systemverilog|quartus|altera|reconfigurable|\\bhdl\\b"
+  },
+  {
+   "_note": "Кириллическая С в 'С++' — не опечатка: имена файлов приходят и с ней, и с латинской C.",
+   "tag": "C++",
+   "kind": "technology",
+   "pattern": "c\\+\\+|с\\+\\+"
+  },
+  {
+   "tag": "Python",
+   "kind": "technology",
+   "pattern": "\\bpython\\b|питон"
+  },
+  {
+   "tag": "Qt",
+   "kind": "technology",
+   "pattern": "\\bqt\\b|\\bqt\\d"
+  },
+  {
+   "tag": "PyTorch",
+   "kind": "technology",
+   "pattern": "pytorch|fastai|lightning"
+  },
+  {
+   "tag": "LangChain",
+   "kind": "technology",
+   "pattern": "langchain"
+  },
+  {
+   "tag": "Docker",
+   "kind": "technology",
+   "pattern": "docker|контейнер|containers"
+  },
+  {
+   "tag": "Matlab",
+   "kind": "technology",
+   "pattern": "matlab|simulink"
+  },
+  {
+   "tag": "USB",
+   "kind": "technology",
+   "pattern": "\\busb\\b"
+  },
+  {
+   "tag": "Modbus",
+   "kind": "technology",
+   "pattern": "modbus"
+  },
+
+  {
+   "tag": "микроконтроллеры",
+   "kind": "topic",
+   "pattern": "микроконтроллер|\\bмк\\b|\\bmcu\\b|microcontroller"
+  },
+  {
+   "tag": "embedded",
+   "kind": "topic",
+   "pattern": "embedded|встраиваем|прошивк|firmware|bare[- ]metal|\\brtos\\b"
+  },
+  {
+   "tag": "электроника",
+   "kind": "topic",
+   "pattern": "электроник|elektronika|радиолюбител|схемотехник|электротехник|усилител|электрические цепи|аналоговые интерфейс"
+  },
+  {
+   "tag": "печатные платы",
+   "kind": "topic",
+   "pattern": "печатных плат|печатные платы|altium|p-?cad|\\bpcb\\b"
+  },
+  {
+   "tag": "робототехника",
+   "kind": "topic",
+   "pattern": "робот|robotics|autonomous flight"
+  },
+  {
+   "tag": "DSP",
+   "kind": "topic",
+   "pattern": "цифровая обработка сигналов|\\bdsp\\b|signal processing|цифровые фильтр"
+  },
+  {
+   "tag": "машинное обучение",
+   "kind": "topic",
+   "pattern": "машинное обучение|machine learning|глубокое обучение|deep learning|нейросет|нейронн|neural"
+  },
+  {
+   "tag": "LLM",
+   "kind": "topic",
+   "pattern": "\\bllm\\b|large language|langchain|\\bgpt\\b"
+  },
+  {
+   "tag": "паттерны проектирования",
+   "kind": "topic",
+   "pattern": "design pattern|паттерн|идиом"
+  },
+  {
+   "tag": "алгоритмы",
+   "kind": "topic",
+   "pattern": "алгоритм|algorithm|структуры данных|satisfiability"
+  },
+  {
+   "tag": "безопасность",
+   "kind": "topic",
+   "pattern": "security|hacking|\\bвзлом\\b|уязвим|криптограф"
+  },
+  {
+   "_note": "Кириллица и транслит рядом: половина математики лежит именами вида 'TeoriyaGrafov'.",
+   "tag": "теория графов",
+   "kind": "topic",
+   "pattern": "теори[ияю] графов|graph theory|grafov|\\bграф\\b"
+  },
+  {
+   "tag": "комбинаторика",
+   "kind": "topic",
+   "pattern": "комбинатор|combinator|enumerative|перечислит"
+  },
+  {
+   "tag": "теория вероятностей",
+   "kind": "topic",
+   "pattern": "вероятност|probabilit|статистик|statistics|monte-?карло|monte carlo"
+  },
+  {
+   "tag": "геометрия",
+   "kind": "topic",
+   "pattern": "геометр|geometr|стереограф|треугольник|тригономет"
+  },
+  {
+   "tag": "алгебра",
+   "kind": "topic",
+   "pattern": "алгебр|algebra|уравнени|uravn|неравенств|neravenstv"
+  },
+  {
+   "tag": "химия",
+   "kind": "topic",
+   "pattern": "хими|chemistry|chemical"
+  },
+  {
+   "tag": "биохимия",
+   "kind": "topic",
+   "pattern": "биохим|biochem"
+  },
+  {
+   "tag": "пивоварение",
+   "kind": "topic",
+   "pattern": "пивовар|brewing|homebrew|\\bbeer\\b"
+  },
+  {
+   "tag": "ферментация",
+   "kind": "topic",
+   "pattern": "ферментац|fermentation|\\bkoji\\b|закваск|консервирован"
+  },
+  {
+   "tag": "самогон",
+   "kind": "topic",
+   "pattern": "самогон|дистилл|moonshine|перегонн"
+  },
+  {
+   "tag": "даосизм",
+   "kind": "topic",
+   "pattern": "даос|\\bдао\\b|лао-?цзы|чжуан|конфуци|taoism|tao te|zhuang|дэ цзин"
+  },
+  {
+   "tag": "анархизм",
+   "kind": "topic",
+   "pattern": "анарх|anarch|кропоткин|бакунин|bookchin|самоорганизац|solidarity|insurrection|post-civ|kronstadt|прямой демократ|ассамбле|акций протеста"
+  },
+  {
+   "tag": "философия",
+   "kind": "topic",
+   "pattern": "философ|philosoph|ницше|шмитт|ясперс"
+  },
+
+  {
+   "tag": "секс и отношения",
+   "kind": "topic",
+   "pattern": "\\bsex\\b|erotic|orgasm|tantric|\\bdating\\b|infidel|интим|\\bсекс|отношени"
+  },
+  {
+   "tag": "матанализ",
+   "kind": "topic",
+   "pattern": "матанализ|математическ\\w* анализ|дифференцирован|дифференцирование|интеграл|производн|бесконечно мал|гиперболическ|логарифм|конформн"
+  },
+  {
+   "tag": "логика и вычислимость",
+   "kind": "topic",
+   "pattern": "гёдел|godel|неполнот|машина поста|цифровые автомат|вычислим|упорядоченные множеств|теория множеств"
+  },
+  {
+   "tag": "датчики",
+   "kind": "technology",
+   "pattern": "accelerometer|gyroscope|\\bsensor\\b|thermometer|thermostat|акселерометр|датчик|time-of-flight|inemo"
+  },
+  {
+   "tag": "испанский",
+   "kind": "language",
+   "pattern": "испанск|spanish"
+  },
+  {
+   "tag": "китайский",
+   "kind": "language",
+   "pattern": "китайск|chinese|\\bhsk\\b"
+  }
+ ]
+}
