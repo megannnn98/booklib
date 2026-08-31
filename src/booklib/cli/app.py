@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import glob as glob_module
 import json
 import shutil
 import sys
 import time
 from contextlib import closing
+from pathlib import Path
 
 import typer
 import uvicorn
@@ -16,7 +18,9 @@ from booklib.api.app import app as fastapi_app
 from booklib.config.settings import Settings, field_source, get_settings
 from booklib.db import connect, init_state
 from booklib.errors import LibraryUnavailable
-from booklib.grouping import collect_groups, stats_report
+from booklib.grouping import AUDIO_EXTS, BOOK_EXTS, collect_groups, stats_report
+from booklib.meta import normalize_basename
+from booklib.paths import library_root, relative_to_root
 from booklib.rootcheck import InvalidRoot
 from booklib.scanner import sync
 from booklib.service import apply_root, rescan
@@ -135,6 +139,88 @@ def classify_cmd(path: str) -> None:
     """Показать, в какой раздел попадёт новая книга с таким путём."""
     section, source = classify_new(path)
     typer.echo(f"{path}\n  -> {section}  (источник: {source})")
+
+
+def _resolve_keys(raw: str) -> list[str]:
+    """Преобразовать аргумент в список ключей карточек.
+
+    Поддерживает:
+    - glob-паттерны с * и ? (раскрываются относительно корня библиотеки);
+    - путь к файлу → ключ карточки (reldir/normalized_basename);
+    - путь к папке → ключи всех книжных файлов в ней;
+    - иначе считается готовым ключом карточки.
+    """
+    root = library_root()
+    keys: list[str] = []
+
+    if any(ch in raw for ch in ("*", "?")):
+        pattern = root / raw if not Path(raw).is_absolute() else Path(raw)
+        for match in glob_module.glob(str(pattern), recursive=True):
+            keys.extend(_resolve_keys(match))
+        return keys
+
+    path = Path(raw)
+    if not path.is_absolute():
+        path = root / path
+
+    all_exts = frozenset(BOOK_EXTS) | frozenset(AUDIO_EXTS)
+    if path.is_file():
+        ext = path.suffix.lower()
+        if ext not in all_exts:
+            return []
+        parent = path.parent
+        reldir = "" if parent == root else relative_to_root(parent)
+        stem = "__audio__" if ext in AUDIO_EXTS else normalize_basename(path.stem)
+        key = f"{reldir}/{stem}" if reldir else stem
+        return [key]
+
+    if path.is_dir():
+        for child in sorted(path.rglob("*")):
+            if child.is_file() and child.suffix.lower() in all_exts:
+                keys.extend(_resolve_keys(str(child)))
+        return keys
+
+    return [raw]
+
+
+@app.command("set-section")
+def set_section_cmd(
+    section: str,
+    keys: list[str],
+) -> None:
+    """Перенести одну или много книг в указанный раздел (запись в overrides)."""
+    with closing(connect()) as conn:
+        resolved: list[str] = []
+        for raw in keys:
+            resolved.extend(_resolve_keys(raw))
+        if not resolved:
+            typer.echo("не удалось определить ни одного ключа карточки")
+            raise typer.Exit(code=1)
+
+        seen: set[str] = set()
+        moved, already, missing = 0, 0, 0
+        for key in resolved:
+            if key in seen:
+                continue
+            seen.add(key)
+            base = conn.execute("SELECT section FROM books WHERE key = ?", (key,)).fetchone()
+            if base is None:
+                typer.echo(f"  нет карточки: {key}")
+                missing += 1
+                continue
+            if base["section"] == section:
+                already += 1
+                continue
+            conn.execute(
+                "INSERT INTO overrides(key, section, updated_at) VALUES(?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET section=excluded.section, updated_at=excluded.updated_at",
+                (key, section, time.time()),
+            )
+            moved += 1
+            typer.echo(f"  ✓ {key}  →  {section}")
+        conn.commit()
+
+    typer.echo(f"\nитого: перенесено {moved}, уже в разделе {already}, не найдено {missing}")
 
 
 @app.command("config")

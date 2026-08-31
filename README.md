@@ -151,8 +151,72 @@ systemctl --user enable --now booklib.service
 
 - правка карточек в UI — ложится в таблицу `overrides` и переживает ресканы;
 - правила для новых книг — файл `config/rules.json` в репозитории поверх
-  пакетного `src/booklib/config/rules.json`. Какой именно файл взят,
-  печатает `booklib doctor`.
+   пакетного `src/booklib/config/rules.json`. Какой именно файл взят,
+   печатает `booklib doctor`.
+
+### Пример: добавить книгу в «Научная фантастика»
+
+Раздел «Научная фантастика» уже есть в таксономии. Два способа туда попасть:
+
+**1. Ручная правка в UI** (для существующих книг)
+
+Откройте витрину → найдите книгу → нажмите «✏» → выберите раздел «Научная
+фантастика» → сохраните. Правка попадёт в таблицу `overrides` и переживёт
+все ресканы.
+
+**2. Правило для новых книг** (автоматическая классификация, в том числе пачкой)
+
+Добавьте regex-правило в `config/rules.json` (создайте файл, если его нет).
+Одно правило с несколькими авторами/ключевыми словами через `|` сразу раскидает
+всю пачку книг:
+
+```json
+{
+  "rules": [
+    {
+      "section": "Научная фантастика",
+      "pattern": "азимов|кларк|хайнлайн|лем|стрругацк|саймак|жилянский|научн.*фантастик|sci-fi|cyberpunk"
+    }
+  ]
+}
+```
+
+Правила из `config/rules.json` проверяются **до** пакетных из
+`src/booklib/config/rules.json`, поэтому ваш оверрайд имеет приоритет.
+Проверьте на нескольких файлах:
+
+```bash
+uv run booklib classify "новое/Азимов - Основание.pdf"
+uv run booklib classify "новое/Лем - Солярис.pdf"
+uv run booklib classify "новое/Стругацкие - Пикник на обочине.pdf"
+# все ожидаемо: Научная фантастика  (источник: rules)
+```
+
+После изменения правил запустите рескан: `make restart` или кнопка «Обновить» —
+все книги, подпадающие под правило, автоматически уйдут в «Научная фантастика».
+
+**3. CLI-команда `set-section`** (пачкой, без правил)
+
+```bash
+# Одна книга по ключу карточки
+uv run booklib set-section "Научная фантастика" "novoe/Azimov - Osnovanie"
+
+# Пачка книг по путям (относительным или абсолютным)
+uv run booklib set-section "Научная фантастика" \
+  "novoe/Azimov - Osnovanie.pdf" \
+  "novoe/Klarck - Deti Zemli.pdf" \
+  "novoe/Lem - Soliaris.pdf"
+
+# Glob-паттерном — все pdf в папке
+uv run booklib set-section "Научная фантастика" "novoe/*.pdf"
+
+# Всю папку рекурсивно
+uv run booklib set-section "Научная фантастика" "novoe/fantasy"
+```
+
+Команда принимает имя раздела и один или несколько аргументов: ключей карточек,
+путей к файлам/папкам или glob-паттернов. Папка игнорируется — ключ извлекается
+из имени файла. Правка попадает в `overrides` и переживает ресканы.
 
 ## Теги
 
@@ -191,12 +255,25 @@ uv run booklib covers --report                # книги без обложки
 uv run booklib covers --force                 # перегенерировать все превью (~30 с)
 uv run booklib sections                       # применить разделы и показать раскладку
 uv run booklib classify "путь/файл.pdf"       # в какой раздел попадёт новая книга
+uv run booklib set-section "Раздел" "ключ" ... # перенести книги в раздел (пачкой)
 uv run booklib config                         # активные настройки и источники
 uv run booklib config --root ~/Books          # сменить корень библиотеки
 uv run booklib config --reset                 # снять рантайм-конфиг
 uv run booklib open --dry-run "<ключ>"        # проверить путь, не открывая nemo
 uv run booklib doctor                         # проверка окружения
 ```
+
+`classify` принимает любой путь — полный или относительный, с папкой или без:
+
+```bash
+uv run booklib classify "STM32H7_reference_manual.pdf"
+uv run booklib classify "programming-embedded/STM32H7_reference_manual.pdf"
+uv run booklib classify "/run/media/b/DOWNLOADS/books/новое/Кропоткин - Взаимопомощь.pdf"
+uv run booklib classify "новое/Гудфеллоу - Глубокое обучение - 2018.pdf"
+```
+
+Папка игнорируется — правило матчится только по имени файла (подчёркивания,
+дефисы и точки заменяются на пробелы, регистр не учитывается).
 
 Разработка: `make help`, `make fmt`, `make lint`, `make typecheck`, `make test`, `make hooks`.
 

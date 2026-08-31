@@ -224,7 +224,7 @@ def api_status(request: Request) -> dict:
 
 @app.get("/api/sections")
 def api_sections() -> list[dict]:
-    known, _ = load_taxonomy()
+    known, _, _ = load_taxonomy()
     with closing(connect()) as conn:
         rows = conn.execute(
             "SELECT COALESCE(o.section, b.section) AS section, COUNT(*) AS n FROM books b "

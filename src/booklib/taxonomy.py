@@ -24,12 +24,24 @@ FALLBACK_SECTION = "Новое"
 AUDIO_SECTION = "Аудио"
 
 
-def load_taxonomy(path: Path | None = None) -> tuple[list[str], dict[str, dict]]:
+def load_taxonomy(path: Path | None = None) -> tuple[list[str], dict[str, dict], dict[str, str]]:
     path = path if path is not None else get_settings().taxonomy_path
     if not path.exists():
-        return [], {}
+        return [], {}, {}
     data = json.loads(path.read_text(encoding="utf-8"))
-    return data.get("sections", []), data.get("books", {})
+    return data.get("sections", []), data.get("books", {}), data.get("directories", {})
+
+
+def _directory_section(key: str, directories: dict[str, str]) -> str | None:
+    """Раздел самой специфичной папки, включающей карточку."""
+    matches = [
+        (directory, section)
+        for directory, section in directories.items()
+        if key.startswith(f"{directory}/")
+    ]
+    if not matches:
+        return None
+    return max(matches, key=lambda item: len(item[0]))[1]
 
 
 def load_rules(path: Path | None = None) -> tuple[list[tuple[re.Pattern[str], str]], str]:
@@ -45,7 +57,7 @@ def load_rules(path: Path | None = None) -> tuple[list[tuple[re.Pattern[str], st
 
 
 def apply(conn: sqlite3.Connection) -> dict[str, int]:
-    _, books = load_taxonomy()
+    _, books, directories = load_taxonomy()
     rules, default_section = load_rules()
     stats = {"taxonomy": 0, "rules": 0, "default": 0, "audio": 0}
 
@@ -54,11 +66,16 @@ def apply(conn: sqlite3.Connection) -> dict[str, int]:
         key = row["key"]
         entry = books.get(key)
 
+        directory_section = _directory_section(key, directories)
         if entry is not None:
             section, source = entry["section"], "taxonomy"
             stats["taxonomy"] += 1
             title = entry.get("title", row["title"])
             author = entry.get("author", row["author"])
+        elif directory_section is not None:
+            section, source = directory_section, "taxonomy"
+            stats["taxonomy"] += 1
+            title, author = row["title"], row["author"]
         elif row["kind"] == Kind.AUDIO:
             section, source = AUDIO_SECTION, "kind"
             stats["audio"] += 1
