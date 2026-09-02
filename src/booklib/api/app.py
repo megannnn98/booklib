@@ -43,11 +43,13 @@ SORTS = {
 LOCAL_HOSTS = frozenset({"127.0.0.1", "::1"})
 
 # Маркеры от локального Caddy. Remote понижает права, Admin повышает их только
-# для loopback-peer; подробности — в docstring is_local_request(). Они влияют
-# только на require_local; публичные ручки (/api/books, /api/sections,
-# /api/cover, /api/files, /api/download, /api/tags) от них не зависят.
+# для loopback-peer; Desktop определяет именно браузер хоста, а не полномочия.
+# Подробности — в docstring is_local_request(). Они влияют только на
+# require_local; публичные ручки (/api/books, /api/sections, /api/cover,
+# /api/files, /api/download, /api/tags) от них не зависят.
 PROXY_REMOTE_HEADER = "X-Booklib-Remote"
 PROXY_ADMIN_HEADER = "X-Booklib-Admin"
+PROXY_DESKTOP_HEADER = "X-Booklib-Desktop"
 # Caddy reverse_proxy always adds these. With proxy_headers=False they remain
 # evidence that the loopback peer is a proxy, not an input to peer resolution.
 FORWARDED_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-forwarded-proto")
@@ -173,6 +175,24 @@ def is_local_request(request: Request) -> bool:
     return not any(header in request.headers for header in FORWARDED_HEADERS)
 
 
+def is_host_desktop_request(request: Request) -> bool:
+    """Запрос пришёл из браузера, запущенного на хосте.
+
+    Прямой loopback — это браузер хоста. Через Caddy хост доказывается только
+    Desktop-маркером, который Caddy ставит для стабильного IPv4 хоста; Admin
+    для trusted LAN намеренно недостаточен. Нет или конфликт маркеров —
+    fail-closed: UI показывает форматы для скачивания, а не запускает nemo.
+    """
+    client = request.client
+    if client is None or client.host not in LOCAL_HOSTS:
+        return False
+    if "1" in request.headers.getlist(PROXY_REMOTE_HEADER):
+        return False
+    if "1" in request.headers.getlist(PROXY_DESKTOP_HEADER):
+        return True
+    return not any(header in request.headers for header in FORWARDED_HEADERS)
+
+
 def require_local(request: Request) -> None:
     """Пускать только с самого компьютера. Fail closed: отсутствие пира — не локально."""
     if not is_local_request(request):
@@ -210,6 +230,7 @@ def api_status(request: Request) -> dict:
     status = {
         "mounted": mounted,
         "local": local,
+        "host_desktop": is_host_desktop_request(request),
         "total": row["total"] or 0,
         "missing": row["missing"] or 0,
         "covers": row["covers"] or 0,

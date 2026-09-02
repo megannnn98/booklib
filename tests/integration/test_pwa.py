@@ -195,6 +195,7 @@ def test_sw_not_cached_by_browser() -> None:
 def test_service_worker_cache_cleanup_uses_prefix() -> None:
     """SW должен удалять только кэши с префиксом booklib-, не трогать чужие."""
     sw = client().get("/sw.js").text
+    assert 'const CACHE_VERSION = "booklib-sw-v3"' in sw
     assert 'startsWith("booklib-")' in sw
 
 
@@ -202,10 +203,11 @@ def test_service_worker_cache_cleanup_uses_prefix() -> None:
 
 
 def test_direct_loopback_is_local() -> None:
-    """Прямой loopback без proxy-маркера → local=true."""
+    """Прямой loopback без proxy-маркера → admin и host desktop."""
     c = client()
     status = c.get("/api/status").json()
     assert status["local"] is True
+    assert status["host_desktop"] is True
 
 
 def test_trusted_proxy_is_local_and_keeps_admin_controls() -> None:
@@ -214,12 +216,42 @@ def test_trusted_proxy_is_local_and_keeps_admin_controls() -> None:
     headers = OWN_PAGE | PROXIED | {"X-Booklib-Admin": "1"}
     status = c.get("/api/status", headers=headers).json()
     assert status["local"] is True
+    assert status["host_desktop"] is False
     assert "root" in status and "db" in status
     assert c.get("/api/settings", headers=headers).status_code == 200
 
     index = c.get("/").text
     for control_id in ("settingsBtn", "tagsAdminBtn", "rescan"):
         assert f'id="{control_id}"' in index
+
+
+def test_host_desktop_proxy_can_open_host_file_manager() -> None:
+    """Только Caddy Desktop-маркер отличает хост через HTTPS от trusted телефона."""
+    c = client()
+    headers = OWN_PAGE | PROXIED | {"X-Booklib-Admin": "1", "X-Booklib-Desktop": "1"}
+    status = c.get("/api/status", headers=headers).json()
+    assert status["local"] is True
+    assert status["host_desktop"] is True
+
+
+def test_remote_marker_beats_desktop_marker() -> None:
+    """Противоречивые маркеры fail closed: проводник не запускается."""
+    c = client()
+    headers = {"X-Booklib-Desktop": "1", "X-Booklib-Remote": "1"}
+    assert c.get("/api/status", headers=headers).json()["host_desktop"] is False
+
+
+def test_non_loopback_cannot_fake_desktop_marker() -> None:
+    """Desktop-маркер не доверяется без loopback-peer локального Caddy."""
+    status = remote().get("/api/status", headers={"X-Booklib-Desktop": "1"}).json()
+    assert status["host_desktop"] is False
+
+
+def test_pwa_opens_files_without_host_desktop_marker() -> None:
+    """Admin trusted LAN не является признаком ПК: карточка открывает форматы."""
+    js = client().get("/static/app.js").text
+    assert "state.hostDesktop = status.host_desktop === true" in js
+    assert "state.hostDesktop ? openBook(book) : openFiles(book)" in js
 
 
 def test_proxied_request_without_marker_is_remote() -> None:

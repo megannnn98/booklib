@@ -81,12 +81,27 @@ sudo chmod 640 /etc/caddy/certs/booklib-server-*.pem
 https://archlinux.local {
     tls /etc/caddy/certs/booklib-server-cert.pem /etc/caddy/certs/booklib-server-key.pem
 
+    # Браузер на хосте: marker определяет действие карточки (открыть nemo),
+    # но не заменяет Admin policy. Адрес закреплён DHCP lease.
+    @host_desktop remote_ip 192.168.0.106
     # Только домашняя LAN, не Docker-подсети.
     @trusted_lan remote_ip 192.168.0.0/24
+
+    handle @host_desktop {
+        # Удалить присланные маркеры ДО reverse_proxy.
+        request_header -X-Booklib-Admin
+        request_header -X-Booklib-Desktop
+        request_header -X-Booklib-Remote
+        reverse_proxy 127.0.0.1:8765 {
+            header_up X-Booklib-Admin "1"
+            header_up X-Booklib-Desktop "1"
+        }
+    }
 
     handle @trusted_lan {
         # Отдельный обработчик: удалить маркеры ДО reverse_proxy.
         request_header -X-Booklib-Admin
+        request_header -X-Booklib-Desktop
         request_header -X-Booklib-Remote
         reverse_proxy 127.0.0.1:8765 {
             header_up X-Booklib-Admin "1"
@@ -96,6 +111,7 @@ https://archlinux.local {
     handle {
         # Отдельный обработчик: удалить маркеры ДО reverse_proxy.
         request_header -X-Booklib-Admin
+        request_header -X-Booklib-Desktop
         request_header -X-Booklib-Remote
         reverse_proxy 127.0.0.1:8765 {
             header_up X-Booklib-Remote "1"
@@ -105,8 +121,11 @@ https://archlinux.local {
 ```
 
 `remote_ip` использует IP TCP-клиента Caddy, а не `X-Forwarded-For`. Поэтому
-заголовки клиента не могут сами выдать права. Для смены доверенной сети меняйте
-только CIDR в `@trusted_lan` и повторно валидируйте конфигурацию.
+заголовки клиента не могут сами выдать права. `@host_desktop` должен содержать
+стабильный DHCP-адрес хоста: только эта ветка добавляет Desktop-маркер для
+открытия проводника. Любой запрос без него fail-closed показывает список
+форматов. Для смены доверенной сети меняйте только CIDR в `@trusted_lan` и
+повторно валидируйте конфигурацию.
 
 ### 6. Проверить конфигурацию
 

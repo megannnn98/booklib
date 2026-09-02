@@ -2,7 +2,7 @@
 
 // Инвариант: поднимать версию при ЛЮБОМ изменении файлов из STATIC_ASSETS,
 // иначе cache-first будет раздавать старую статику навсегда.
-const CACHE_VERSION = "booklib-sw-v2";
+const CACHE_VERSION = "booklib-sw-v3";
 
 const STATIC_ASSETS = [
   "/",

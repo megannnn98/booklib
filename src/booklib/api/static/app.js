@@ -6,6 +6,7 @@ const state = {
   sort: "title",
   sections: [],
   local: true,
+  hostDesktop: false,
   tags: [],
   availableTags: [],
   editorTags: [],
@@ -272,6 +273,7 @@ async function loadTags() {
 async function loadStatus() {
   const status = await api("/api/status");
   state.local = status.local !== false;
+  state.hostDesktop = status.host_desktop === true;
   // Удалённому гостю привилегии недоступны: не рисуем то, что вернёт 403.
   // (css: .header-remote скрывает эти кнопки).
   document.body.classList.toggle("remote", !state.local);
@@ -388,7 +390,7 @@ function cardNode(book) {
       className: "edited", textContent: "правлено",
     }));
   }
-  card.onclick = () => (state.local ? openBook(book) : openFiles(book));
+  card.onclick = () => (state.hostDesktop ? openBook(book) : openFiles(book));
   return card;
 }
 
