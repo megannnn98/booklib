@@ -1,4 +1,4 @@
-.PHONY: help install lock fmt lint typecheck test test-unit test-integration hooks \
+.PHONY: help install lock fmt lint typecheck test test-js test-unit test-integration hooks \
         scan covers sections doctor serve restart logs
 
 PKG := booklib
@@ -12,6 +12,7 @@ help:
 	@echo "  make lint             - ruff check"
 	@echo "  make typecheck        - mypy"
 	@echo "  make test             - pytest (all)"
+	@echo "  make test-js          - node unit tests"
 	@echo "  make test-unit        - pytest unit only"
 	@echo "  make test-integration - pytest integration only"
 	@echo "  make scan             - пересканировать библиотеку"
@@ -44,6 +45,9 @@ typecheck:
 
 test:
 	uv run pytest
+
+test-js:
+	node --test tests/unit/*.cjs
 
 test-unit:
 	uv run pytest tests/unit -v

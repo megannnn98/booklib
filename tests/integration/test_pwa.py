@@ -147,6 +147,13 @@ def test_html_includes_sw_registration() -> None:
     assert "sw.js" in js
 
 
+def test_html_loads_tag_helpers_before_app() -> None:
+    html = client().get("/").text
+    assert '<script src="/static/tag_helpers.js"></script>' in html
+    assert '<script src="/static/app.js"></script>' in html
+    assert html.index("/static/tag_helpers.js") < html.index("/static/app.js")
+
+
 def test_html_has_theme_color_meta() -> None:
     html = client().get("/").text
     assert "theme-color" in html
@@ -195,7 +202,7 @@ def test_sw_not_cached_by_browser() -> None:
 def test_service_worker_cache_cleanup_uses_prefix() -> None:
     """SW должен удалять только кэши с префиксом booklib-, не трогать чужие."""
     sw = client().get("/sw.js").text
-    assert 'const CACHE_VERSION = "booklib-sw-v3"' in sw
+    assert 'const CACHE_VERSION = "booklib-sw-v7"' in sw
     assert 'startsWith("booklib-")' in sw
 
 
@@ -252,6 +259,23 @@ def test_pwa_opens_files_without_host_desktop_marker() -> None:
     js = client().get("/static/app.js").text
     assert "state.hostDesktop = status.host_desktop === true" in js
     assert "state.hostDesktop ? openBook(book) : openFiles(book)" in js
+
+
+def test_editor_tag_lookup_is_case_insensitive_and_reports_unknown_tag() -> None:
+    """Ручной тег не должен тихо теряться из-за регистра или алиаса."""
+    helpers = client().get("/static/tag_helpers.js").text
+    js = client().get("/static/app.js").text
+    assert "function findAvailableTag(availableTags, value)" in helpers
+    assert "function addEditorTagFromInput(availableTags, editorTags, value)" in helpers
+    assert "function resolveEditorSubmitAction(event)" in helpers
+    assert "item.name.toLowerCase() === needle" in helpers
+    assert "alias.toLowerCase() === needle" in helpers
+    assert "Нет такого тега:" in helpers
+    assert "addEditorTagFromInput" in js
+    assert "resolveEditorSubmitAction" in js
+    assert "Формы теговых диалогов — только контейнеры разметки." in js
+    assert 'el.tfForm.addEventListener("submit", (event) => event.preventDefault());' in js
+    assert 'el.taForm.addEventListener("submit", (event) => event.preventDefault());' in js
 
 
 def test_proxied_request_without_marker_is_remote() -> None:

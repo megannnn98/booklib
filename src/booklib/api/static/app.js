@@ -1,5 +1,11 @@
 "use strict";
 
+const {
+  normalizeTagName,
+  addEditorTagFromInput,
+  resolveEditorSubmitAction,
+} = globalThis.BooklibTagHelpers;
+
 const state = {
   section: "*",
   q: "",
@@ -27,11 +33,13 @@ const el = {
   burger: document.getElementById("burger"),
   tagbar: document.getElementById("tagbar"),
   tagfilter: document.getElementById("tagfilter"),
+  tfForm: document.getElementById("tf-form"),
   tfSearch: document.getElementById("tf-search"),
   tfList: document.getElementById("tf-list"),
   tfClear: document.getElementById("tf-clear"),
   tfClose: document.getElementById("tf-close"),
   tagsadmin: document.getElementById("tagsadmin"),
+  taForm: document.getElementById("ta-form"),
   taSearch: document.getElementById("ta-search"),
   taList: document.getElementById("ta-list"),
   taName: document.getElementById("ta-name"),
@@ -61,6 +69,7 @@ const el = {
   filesCancel: document.getElementById("files-cancel"),
   toast: document.getElementById("toast"),
   editor: document.getElementById("editor"),
+  eForm: document.getElementById("e-form"),
   eKey: document.getElementById("e-key"),
   eTitle: document.getElementById("e-title"),
   eAuthor: document.getElementById("e-author"),
@@ -117,12 +126,22 @@ function plural(n, one, few, many) {
   return many;
 }
 
-function normalizeTagName(value) {
-  return value.trim();
-}
-
 function currentTagNames() {
   return state.editorTags.map((tag) => tag.name);
+}
+
+function tryAddEditorTag(value) {
+  const result = addEditorTagFromInput(state.availableTags, state.editorTags, value);
+  if (result.error) {
+    toast(result.error, true);
+    return false;
+  }
+  state.editorTags = result.editorTags;
+  el.eTagInput.value = result.inputValue;
+  if (result.added) {
+    renderEditorTags();
+  }
+  return true;
 }
 
 function renderTagChips(container, items, onRemove, onClick) {
@@ -399,6 +418,7 @@ function editBook(book) {
   el.eTitle.value = book.title || "";
   el.eAuthor.value = book.author || "";
   el.eSection.value = book.section || "";
+  el.eTagInput.value = "";
   state.editorTags = [...(book.tags || [])];
   renderEditorTags();
   el.tagsList.replaceChildren(...state.availableTags.map((tag) =>
@@ -595,6 +615,12 @@ el.sort.addEventListener("change", () => {
 });
 
 el.settingsBtn.addEventListener("click", openSettings);
+// Формы теговых диалогов — только контейнеры разметки. Без method="dialog" Enter
+// в единственном текстовом поле уходит implicit submit'ом в GET на текущий URL и
+// перезагружает витрину; у #ta-form сегодня не срабатывает лишь из-за числа полей
+// (спека отменяет implicit submission при >1 блокирующем поле) — на это опираться нельзя.
+el.tfForm.addEventListener("submit", (event) => event.preventDefault());
+el.taForm.addEventListener("submit", (event) => event.preventDefault());
 el.tagsBtn.addEventListener("click", () => {
   el.tfSearch.value = "";
   renderFilterList();
@@ -617,17 +643,20 @@ el.taClose.addEventListener("click", () => el.tagsadmin.close());
 el.eTagAdd.addEventListener("click", () => {
   const value = normalizeTagName(el.eTagInput.value);
   if (!value) return;
-  const tag = state.availableTags.find((item) => item.name === value);
-  if (!tag || state.editorTags.some((item) => item.name === tag.name)) return;
-  state.editorTags = [...state.editorTags, tag];
-  el.eTagInput.value = "";
-  renderEditorTags();
+  tryAddEditorTag(value);
 });
 el.eTagInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
     el.eTagAdd.click();
   }
+});
+el.eForm.addEventListener("submit", (event) => {
+  const action = resolveEditorSubmitAction(event);
+  if (action !== "save") return;
+  event.preventDefault();
+  if (!tryAddEditorTag(el.eTagInput.value)) return;
+  el.editor.close("save");
 });
 el.taCreate.addEventListener("click", () => runTagAction(() => postJson("/api/tags", {
   name: el.taName.value,

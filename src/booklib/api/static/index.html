@@ -43,7 +43,7 @@
 </main>
 
 <dialog id="editor">
-  <form method="dialog">
+  <form id="e-form" method="dialog">
     <h2>Правка карточки</h2>
     <p id="e-key"></p>
     <label>Название<input id="e-title" autocomplete="off"></label>
@@ -60,9 +60,9 @@
       <datalist id="tags-list"></datalist>
     </div>
     <menu>
-      <button value="cancel">Отмена</button>
-      <button value="reset">Сбросить правки</button>
-      <button value="save" class="primary">Сохранить</button>
+      <button id="e-cancel" value="cancel">Отмена</button>
+      <button id="e-reset" value="reset">Сбросить правки</button>
+      <button id="e-save" value="save" class="primary">Сохранить</button>
     </menu>
   </form>
 </dialog>
@@ -145,6 +145,7 @@
 
 <div id="toast" hidden></div>
 <button id="installBtn" type="button" hidden>Установить Booklib</button>
+<script src="/static/tag_helpers.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
