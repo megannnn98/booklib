@@ -53,6 +53,8 @@ src/booklib/scanner.py          инкрементальный диф карто
 src/booklib/meta.py             нормализация имени файла, название/автор/год
 src/booklib/covers.py           превью: pdftocairo / ddjvu+Pillow / zip(epub) / base64(fb2)
 src/booklib/taxonomy.py         разделы: overrides → taxonomy.json → rules.json → «Новое»
+src/booklib/tags.py             словарь тегов и ручные назначения (source = 'manual')
+src/booklib/autotags.py         автотеги по tag_rules.json (source = 'auto'), каждый рескан
 src/booklib/opener.py           DBus FileManager1.ShowItems, запасной xdg-open
 frontend/src/                  TS: API, состояние, DOM-модули, browser.ts — вход
 frontend/test/                 Vitest + jsdom, тесты по поведению
@@ -160,6 +162,13 @@ Typer-callback и lifespan FastAPI): миграция legacy-состояния 
   Python считает `.pyc` валидным по `(mtime, size)` и продолжает исполнять
   мутированный код — «исправление не работает» оказывается ложью. Прогонять
   с `PYTHONDONTWRITEBYTECODE=1` и делать `touch` после восстановления.
+- **Автотеги долго были мёртвым кодом.** `autotags.apply()` покрывали тесты, но
+  не звал ни рескан, ни CLI — у 3122 карточек не было ни одного тега, и
+  правила `tag_rules.json` никто ни разу не видел в деле. Вызов теперь в
+  `service._rescan()` и в `booklib scan` (CLI делает sync сам, мимо сервиса).
+  Проверять покрытие — `booklib tags --dry-run`, а не только юнит-тестами.
+- **`\b` в регулярках правил стоит и между `C` и `+`.** `beginning c\b` ловит
+  «Beginning C++». Для имён языков нужен хвост `(?![+\w])`.
 - **`<form method="dialog">` превращает Enter в закрытие диалога** (implicit
   submission), причём с `returnValue` первой submit-кнопки — то есть «Отмена».
   В настройках это лечится не keydown-хаком, а отказом от `method="dialog"`:
@@ -192,6 +201,7 @@ uv run booklib scan --dry-run             # статистика без запи
 uv run booklib scan --show "Эвола"        # как сгруппировались файлы
 uv run booklib covers --report            # книги без обложки и причины
 uv run booklib sections                   # применить разделы
+uv run booklib tags --dry-run             # покрытие автотегами без записи
 uv run booklib classify "путь/файл.pdf"   # куда попадёт новая книга
 uv run booklib open --dry-run "<ключ>"    # проверить путь, не открывая nemo
 uv run booklib doctor                     # утилиты, библиотека, каталог
@@ -217,6 +227,7 @@ uv run booklib config --root <path>       # сменить корень (вал�
 
 ## Ориентиры по данным
 
+На 2026-10-30 — 3122 живых карточки (цифры ниже — от первого скана).
 354 карточки из 506 файлов (273 pdf, 127 djvu + 1 djv, 32 epub, 10 fb2, 8 rtf,
 55 mp3). 55 mp3 схлопываются в одну аудио-карточку.
 Схлопывание — это реальные дубликаты, а не потеря: `Unity_Assertions_..._v2…v25` —

@@ -12,7 +12,7 @@ from __future__ import annotations
 import threading
 import time
 
-from booklib import covers
+from booklib import autotags, covers
 from booklib.config.settings import write_runtime_config
 from booklib.db import connect, init_slot_marker
 from booklib.grouping import collect_groups
@@ -30,11 +30,13 @@ def _rescan() -> dict:
     try:
         stats = sync(conn, groups)
         apply_sections(conn)
+        tag_stats = autotags.apply(conn)
     finally:
         conn.close()
     cover_stats = covers.generate()
     return {
         **stats,
+        "autotagged": tag_stats["tagged"],
         "covers_built": cover_stats["built"],
         "covers_failed": cover_stats["failed"],
         "elapsed": round(time.time() - started, 2),
@@ -42,7 +44,7 @@ def _rescan() -> dict:
 
 
 def rescan() -> dict:
-    """Полный цикл обновления: скан → разделы → недостающие обложки.
+    """Полный цикл обновления: скан → разделы → автотеги → недостающие обложки.
 
     Под замком: роуты синхронные и выполняются в пуле потоков uvicorn, поэтому
     двойной клик по «Обновить» или вторая вкладка запускали два скана разом —

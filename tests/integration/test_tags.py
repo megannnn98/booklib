@@ -341,6 +341,11 @@ def test_tags_survive_rescan_and_book_disappearance(library: Path, db: sqlite3.C
     Пропавшая книга уходит из count, но связь остаётся: вернулась — тег на месте.
     Мутация: заставить scanner.sync чистить book_tags — тест краснеет.
     """
+    # Рескан пересобирает и автотеги: пакетное правило «философия» матчит
+    # «Гегель» и добавило бы второй тег. Тест — про ручные, правила пустые.
+    rules = library.parent / "config" / "tag_rules.json"
+    rules.parent.mkdir(parents=True, exist_ok=True)
+    rules.write_text('{"rules": []}', encoding="utf-8")
     client = _client(library, db)
     _make_tag(client, "Гегель")
     _assign(client, LOGIC, ["Гегель"])

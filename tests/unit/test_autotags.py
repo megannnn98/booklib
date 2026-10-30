@@ -6,7 +6,10 @@ import json
 import sqlite3
 from pathlib import Path
 
+from typer.testing import CliRunner
+
 from booklib import autotags
+from booklib.cli.app import app
 from booklib.config.settings import PACKAGE_CONFIG_DIR, get_settings
 from booklib.db import connect_at
 from booklib.tags import add_alias, create_tag, set_book_tags, tags_for
@@ -194,3 +197,79 @@ def test_missing_books_are_tagged_too(tmp_path: Path) -> None:
     _apply(conn, tmp_path)
 
     assert _names(conn, "dir/zephyr_book") == ["Zephyr"]
+
+
+def test_manual_title_override_feeds_rules(tmp_path: Path) -> None:
+    """Правка названия в UI — ровно тот случай, когда имя файла нечитаемо.
+
+    Мутация: матчить по `books.title` вместо COALESCE с overrides — тест падает.
+    """
+    conn = connect_at(tmp_path / "auto.db")
+    _insert_book(conn, "dir/01129628", title="01129628")
+    conn.execute(
+        "INSERT INTO overrides(key, title, author, section, updated_at) VALUES(?,?,?,?,?)",
+        ("dir/01129628", "Zephyr RTOS", None, None, 1.0),
+    )
+    conn.commit()
+
+    _apply(conn, tmp_path)
+
+    assert _names(conn, "dir/01129628") == ["Zephyr"]
+
+
+def test_dry_run_reports_without_writing(tmp_path: Path) -> None:
+    conn = connect_at(tmp_path / "auto.db")
+    _insert_book(conn, "dir/zephyr_book")
+    _insert_book(conn, "dir/plain_book")
+    conn.commit()
+    _write_rules(tmp_path)
+
+    preview = autotags.preview(conn)
+    coverage = autotags.coverage(conn)
+
+    assert preview["tagged"] == 1
+    assert coverage["tagged"] == 0, "preview записал связи"
+    assert conn.execute("SELECT COUNT(*) AS n FROM tags").fetchone()["n"] == 0
+
+
+def test_coverage_counts_live_books_only(tmp_path: Path) -> None:
+    conn = connect_at(tmp_path / "auto.db")
+    _insert_book(conn, "dir/zephyr_book")
+    _insert_book(conn, "dir/plain_book")
+    _insert_book(conn, "dir/zephyr_gone", missing=1)
+    conn.commit()
+
+    _apply(conn, tmp_path)
+    coverage = autotags.coverage(conn)
+
+    assert coverage["books"] == 2
+    assert coverage["tagged"] == 1
+    assert coverage["tags"] == [("Zephyr", 1)]
+
+
+def test_cli_tags_dry_run_does_not_write(tmp_path: Path, db: sqlite3.Connection) -> None:
+    """`booklib tags --dry-run` печатает покрытие и не оставляет связей.
+
+    Мутация: в tags_cmd звать apply вместо preview при --dry-run — тест падает.
+    """
+    _insert_book(db, "dir/zephyr_book")
+    db.commit()
+    _write_rules(tmp_path)
+
+    result = CliRunner().invoke(app, ["tags", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "с тегами: 1/1" in result.output
+    assert db.execute("SELECT COUNT(*) AS n FROM book_tags").fetchone()["n"] == 0
+
+
+def test_packaged_c_rule_does_not_swallow_cpp() -> None:
+    """`\\b` стоит и между 'C' и '+': без хвоста (?![+\\w]) «Beginning C++»
+    становился книгой по Си. Мутация: убрать хвост из правила — тест падает."""
+    rules = {rule.tag: rule for rule in autotags.load_rules(PACKAGE_CONFIG_DIR / "tag_rules.json")}
+    c_rule = rules["C"].pattern
+
+    assert c_rule.search("Head First C")
+    assert c_rule.search("Программирование на языке Си")
+    assert not c_rule.search("Beginning C++20 From Novice to Professional")
+    assert not c_rule.search("Programming in C++ for engineers")

@@ -13,7 +13,7 @@ from pathlib import Path
 import typer
 import uvicorn
 
-from booklib import covers, opener
+from booklib import autotags, covers, opener
 from booklib.api.app import app as fastapi_app
 from booklib.config.settings import Settings, field_source, get_settings
 from booklib.db import connect, init_state
@@ -86,6 +86,7 @@ def scan(
     try:
         stats = sync(conn, groups)
         sections = apply_sections(conn)
+        tag_stats = autotags.apply(conn)
     except LibraryUnavailable as exc:
         typer.secho(f"ОШИБКА: {exc}", fg="red", err=True)
         raise typer.Exit(2) from exc
@@ -94,6 +95,7 @@ def scan(
 
     typer.echo("\n" + "  ".join(f"{k}={v}" for k, v in stats.items()))
     typer.echo("разделы: " + "  ".join(f"{k}={v}" for k, v in sections.items()))
+    typer.echo("автотеги: " + "  ".join(f"{k}={v}" for k, v in tag_stats.items()))
 
 
 @app.command("covers")
@@ -132,6 +134,35 @@ def sections() -> None:
     for row in rows:
         typer.echo(f"{row['n']:4d}  {row['section']}")
     typer.echo("\nисточники: " + "  ".join(f"{k}={v}" for k, v in stats.items()))
+
+
+@app.command("tags")
+def tags_cmd(
+    dry_run: bool = typer.Option(False, "--dry-run", help="покрытие без записи в СУБД"),
+    top: int = typer.Option(30, help="сколько тегов печатать"),
+) -> None:
+    """Пересобрать автотеги по tag_rules.json и показать покрытие."""
+    conn = connect()
+    try:
+        if dry_run:
+            report = autotags.preview(conn)
+        else:
+            stats = autotags.apply(conn)
+            typer.echo("  ".join(f"{k}={v}" for k, v in stats.items()))
+            report = autotags.coverage(conn)
+    finally:
+        conn.close()
+
+    books, tagged = report["books"], report["tagged"]
+    share = tagged / books if books else 0.0
+    typer.echo(f"с тегами: {tagged}/{books} ({share:.0%}), без тегов: {books - tagged}")
+    for name, n in report["tags"][:top]:
+        typer.echo(f"{n:4d}  {name}")
+    typer.echo("\nбез тегов по разделам:")
+    for section, n in report["untagged_by_section"]:
+        typer.echo(f"{n:4d}  {section}")
+    if dry_run:
+        typer.echo("\n--dry-run: каталог не изменён")
 
 
 @app.command("classify")
