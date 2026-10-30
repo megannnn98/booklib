@@ -99,10 +99,6 @@ jobs:
       - name: Vitest
         run: npm test
 
-      # Временно: старые node-тесты хелперов живут до переноса в vitest (шаг 2).
-      - name: Legacy node unit tests
-        run: node --test tests/unit/*.cjs
-
   pre-commit:
     name: pre-commit
     runs-on: ubuntu-latest
