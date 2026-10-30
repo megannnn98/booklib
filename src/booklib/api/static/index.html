@@ -13,45 +13,127 @@
 <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
 <link rel="stylesheet" href="/static/style.css">
+<!-- Тема ставится до первой отрисовки, иначе светлая тема «мигает» тёмной. -->
+<script>
+  (function () {
+    var theme = null;
+    try { theme = localStorage.getItem("booklib.theme"); } catch (e) { /* без storage */ }
+    if (theme !== "light" && theme !== "dark") {
+      theme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    }
+    document.documentElement.dataset.theme = theme;
+  })();
+</script>
 </head>
 <body>
-<aside id="sidebar">
-  <h1>booklib</h1>
-  <nav id="sections"></nav>
-  <div id="status"></div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-logo" viewBox="0 0 24 24"><path d="M4 4.5h5.5a2.5 2.5 0 0 1 2.5 2.5v13a2 2 0 0 0-2-2H4z"/><path d="M20 4.5h-5.5A2.5 2.5 0 0 0 12 7v13a2 2 0 0 1 2-2h6z"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" stroke-width="3"/></symbol>
+  <symbol id="i-dense" viewBox="0 0 24 24"><path d="M4 4h4v4H4zM10 4h4v4h-4zM16 4h4v4h-4zM4 10h4v4H4zM10 10h4v4h-4zM16 10h4v4h-4zM4 16h4v4H4zM10 16h4v4h-4zM16 16h4v4h-4z"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.8v.01"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M14.5 5.5l4 4L8 20H4v-4z"/><path d="M12.5 7.5l4 4"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3L19.5 9"/><path d="M19.5 4.5V9H15"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 14.1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 3V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.1a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3a1.5 1.5 0 0 1 0 2.1l-6.2 6.2a1.5 1.5 0 0 1-2.1 0z"/><circle cx="8" cy="8" r="1.3"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-books" viewBox="0 0 24 24"><path d="M4 4.5h4v15H4zM10 4.5h4v15h-4z"/><path d="m16 5.2 3.6-1 3.4 14.5-3.6 1z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-install" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2.5"/><path d="M12 8v6M9.5 11.5 12 14l2.5-2.5"/></symbol>
+</svg>
+
+<aside id="sidebar" aria-label="Навигация">
+  <div class="brand"><svg class="icon"><use href="#i-logo"/></svg>Booklib</div>
+  <nav class="nav-main">
+    <button type="button" class="nav-item" data-view="all">
+      <svg class="icon"><use href="#i-books"/></svg><span class="label">Все книги</span><span class="count" id="totalCount"></span>
+    </button>
+    <button type="button" class="nav-item" data-view="recent">
+      <svg class="icon"><use href="#i-clock"/></svg><span class="label">Недавно добавленные</span>
+    </button>
+  </nav>
+  <div class="nav-label"><span>Разделы</span></div>
+  <div class="section-search">
+    <svg class="icon"><use href="#i-search"/></svg>
+    <input id="sectionSearch" type="search" placeholder="Найти раздел" autocomplete="off" aria-label="Поиск по разделам">
+  </div>
+  <nav id="sections" aria-label="Разделы"></nav>
+  <div class="sidebar-foot">
+    <div id="status"></div>
+    <button id="settingsBtn" type="button" class="nav-item admin-only">
+      <svg class="icon"><use href="#i-settings"/></svg><span class="label">Настройки</span>
+    </button>
+    <button id="tagsAdminBtn" type="button" class="nav-item admin-only">
+      <svg class="icon"><use href="#i-tag"/></svg><span class="label">Словарь тегов</span>
+    </button>
+    <button id="installBtn" type="button" class="nav-item" hidden>
+      <svg class="icon"><use href="#i-install"/></svg><span class="label">Установить Booklib</span>
+    </button>
+  </div>
 </aside>
 <div id="sidebar-overlay"></div>
 
-<main>
-  <header>
-    <button id="burger" type="button" title="Разделы">☰</button>
-    <input id="search" type="search" placeholder="поиск по названию, автору, имени файла" autocomplete="off">
-    <select id="sort">
-      <option value="title">по названию</option>
-      <option value="added">по дате добавления</option>
-      <option value="year">по году</option>
-      <option value="size">по размеру</option>
+<main class="app-main">
+  <header id="topbar">
+    <button id="burger" type="button" class="btn icon-only" title="Разделы" aria-label="Показать или скрыть разделы">
+      <svg class="icon"><use href="#i-menu"/></svg>
+    </button>
+    <div class="search-wrap">
+      <svg class="icon"><use href="#i-search"/></svg>
+      <input id="search" type="search" placeholder="Название, автор, имя файла" autocomplete="off" enterkeyhint="search" aria-label="Поиск по каталогу">
+    </div>
+    <span class="spacer"></span>
+    <select id="sort" aria-label="Сортировка">
+      <option value="title">По названию</option>
+      <option value="added">По дате добавления</option>
+      <option value="year">По году</option>
+      <option value="size">По размеру</option>
     </select>
-    <button id="tagsBtn" type="button" title="Теги">🏷 теги 0</button>
-    <button id="settingsBtn" type="button" title="Настройки">⚙</button>
-    <button id="tagsAdminBtn" type="button" title="Словарь тегов">✎🏷</button>
-    <button id="rescan" type="button">Обновить</button>
+    <button id="filtersBtn" type="button" class="btn" title="Фильтры: формат и теги">
+      <svg class="icon"><use href="#i-filter"/></svg><span class="label-wide">Фильтры</span><span class="badge" id="filtersBadge" hidden></span>
+    </button>
+    <div class="seg" id="viewSwitch" role="group" aria-label="Вид каталога">
+      <button type="button" data-mode="grid" title="Сетка" aria-label="Сетка"><svg class="icon"><use href="#i-grid"/></svg></button>
+      <button type="button" data-mode="list" title="Список" aria-label="Список"><svg class="icon"><use href="#i-list"/></svg></button>
+    </div>
+    <button id="densityBtn" type="button" class="btn icon-only" title="Компактная сетка" aria-label="Компактная сетка" aria-pressed="false">
+      <svg class="icon"><use href="#i-dense"/></svg>
+    </button>
+    <button id="themeBtn" type="button" class="btn icon-only" title="Сменить тему" aria-label="Сменить тему">
+      <svg class="icon"><use href="#i-sun"/></svg>
+    </button>
+    <button id="rescan" type="button" class="btn admin-only" title="Пересканировать библиотеку">
+      <svg class="icon"><use href="#i-refresh"/></svg><span class="label-wide">Обновить</span>
+    </button>
   </header>
-  <div id="tagbar" hidden></div>
-  <div id="counter"></div>
-  <div id="grid"></div>
+
+  <div id="contextbar">
+    <h1 id="viewTitle">Все книги</h1>
+    <span id="counter" aria-live="polite"></span>
+    <div id="chips"></div>
+  </div>
+  <div id="banner" hidden></div>
+  <div id="grid" class="view-grid"></div>
+  <div id="more" hidden><button id="moreBtn" type="button" class="btn">Показать ещё</button></div>
 </main>
 
-<dialog id="editor">
-  <form id="e-form" method="dialog">
-    <h2>Правка карточки</h2>
-    <p id="e-key"></p>
+<dialog id="editor" aria-labelledby="e-heading">
+  <form id="e-form" method="dialog" class="dlg-body">
+    <div class="dlg-head"><h2 id="e-heading">Правка карточки</h2></div>
+    <p id="e-key" class="dlg-key"></p>
     <label>Название<input id="e-title" autocomplete="off"></label>
     <label>Автор<input id="e-author" autocomplete="off"></label>
     <label>Раздел<input id="e-section" list="sections-list" autocomplete="off"></label>
     <datalist id="sections-list"></datalist>
     <div id="e-tags-block">
-      <label>Теги</label>
+      <label for="e-tag-input">Теги</label>
       <div id="e-tags"></div>
       <div id="e-tags-row">
         <input id="e-tag-input" list="tags-list" autocomplete="off" placeholder="добавить тег">
@@ -70,10 +152,10 @@
 <!-- Без method="dialog": submit формы (в том числе Enter в поле пути) — это
      «Проверить», а не закрытие диалога. Кнопки действий — обычные button'ы
      с явными обработчиками, поэтому returnValue тут не нужен. -->
-<dialog id="settings">
-  <form id="s-form">
-    <h2>Настройки</h2>
-    <p id="s-current"></p>
+<dialog id="settings" aria-labelledby="s-heading">
+  <form id="s-form" class="dlg-body">
+    <div class="dlg-head"><h2 id="s-heading">Настройки</h2></div>
+    <p id="s-current" class="dlg-key"></p>
     <label>Путь библиотеки
       <span id="s-row">
         <input id="s-root" autocomplete="off" spellcheck="false">
@@ -91,29 +173,58 @@
 
 <!-- Лист файлов карточки: удалённый клиент нажимает на карточку и получает
      ссылки на скачивание каждого формата. Без method="dialog": кнопка — обычная. -->
-<dialog id="files">
-  <div id="files-title"></div>
-  <div id="files-list"></div>
-  <menu>
-    <button type="button" id="files-cancel">Закрыть</button>
-  </menu>
+<dialog id="files" aria-labelledby="files-title">
+  <div class="dlg-body">
+    <div class="dlg-head">
+      <div id="files-title"></div>
+      <button type="button" id="files-cancel" class="dlg-close" aria-label="Закрыть"><svg class="icon"><use href="#i-x"/></svg></button>
+    </div>
+    <div id="files-list"></div>
+  </div>
 </dialog>
 
-<dialog id="tagfilter">
-  <form id="tf-form">
-    <h2>Теги</h2>
+<!-- Подробности книги: открываются только кнопкой «i», основной клик по карточке
+     по-прежнему открывает папку (хост) или лист форматов (остальные). -->
+<dialog id="details" class="drawer" aria-labelledby="d-title">
+  <div class="dlg-body">
+    <div class="dlg-head">
+      <span></span>
+      <button type="button" id="d-close" class="dlg-close" aria-label="Закрыть"><svg class="icon"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="d-cover" id="d-cover"></div>
+    <h2 id="d-title"></h2>
+    <p id="d-author"></p>
+    <dl class="d-props" id="d-props"></dl>
+    <div class="d-actions" id="d-actions"></div>
+    <h3>Файлы</h3>
+    <div id="d-files"></div>
+  </div>
+</dialog>
+
+<dialog id="tagfilter" class="drawer" aria-labelledby="tf-heading">
+  <form id="tf-form" class="dlg-body">
+    <div class="dlg-head">
+      <h2 id="tf-heading">Фильтры</h2>
+      <button type="button" id="tf-close" class="dlg-close" aria-label="Закрыть"><svg class="icon"><use href="#i-x"/></svg></button>
+    </div>
+    <h3>Формат</h3>
+    <div class="fmt-toggles" id="tf-formats"></div>
+    <h3>Теги</h3>
     <input id="tf-search" type="search" placeholder="поиск по имени или алиасу" autocomplete="off">
     <div id="tf-list"></div>
     <menu>
-      <button type="button" id="tf-clear">Сбросить</button>
-      <button type="button" id="tf-close">Закрыть</button>
+      <button type="button" id="tf-clear">Сбросить фильтры</button>
+      <button type="button" id="tf-done" class="primary">Готово</button>
     </menu>
   </form>
 </dialog>
 
-<dialog id="tagsadmin">
-  <form id="ta-form">
-    <h2>Словарь тегов</h2>
+<dialog id="tagsadmin" aria-labelledby="ta-heading">
+  <form id="ta-form" class="dlg-body">
+    <div class="dlg-head">
+      <h2 id="ta-heading">Словарь тегов</h2>
+      <button type="button" id="ta-close" class="dlg-close" aria-label="Закрыть"><svg class="icon"><use href="#i-x"/></svg></button>
+    </div>
     <input id="ta-search" type="search" placeholder="поиск" autocomplete="off">
     <div id="ta-list"></div>
     <label>Название<input id="ta-name" autocomplete="off"></label>
@@ -138,14 +249,13 @@
       <button type="button" id="ta-remove-alias">Удалить алиас</button>
       <button type="button" id="ta-merge">Объединить</button>
       <button type="button" id="ta-delete">Удалить</button>
-      <button type="button" id="ta-close">Закрыть</button>
     </div>
   </form>
 </dialog>
 
-<div id="toast" hidden></div>
-<button id="installBtn" type="button" hidden>Установить Booklib</button>
+<div id="toast" role="status" hidden></div>
 <script src="/static/tag_helpers.js"></script>
+<script src="/static/ui_helpers.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
