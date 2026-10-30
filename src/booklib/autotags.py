@@ -87,6 +87,47 @@ def _ensure_tag(conn: sqlite3.Connection, rule: TagRule) -> tuple[int, bool]:
     return conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"], True
 
 
+def _rebuild(conn: sqlite3.Connection, rules: list[TagRule]) -> dict[str, int]:
+    """Тело пересборки без управления транзакцией: его держат apply/preview."""
+    stats = {"rules": len(rules), "tags_created": 0, "links": 0, "books": 0, "tagged": 0}
+    tag_ids: dict[str, int] = {}
+    for rule in rules:
+        tag_id, created = _ensure_tag(conn, rule)
+        tag_ids[rule.tag] = tag_id
+        stats["tags_created"] += int(created)
+
+    # Карточки в статусе missing тоже обрабатываются: пропуск оставил бы у
+    # них auto-связи от прошлого прогона, а свежие правила к ним бы не
+    # применились — выдача зависела бы от того, был ли диск примонтирован.
+    conn.execute("DELETE FROM book_tags WHERE source = 'auto'")
+    # Ручная правка названия/автора главнее taxonomy, как и в выдаче: правят
+    # ровно те карточки, у которых имя файла нечитаемо и правилам не за что
+    # зацепиться.
+    rows = conn.execute(
+        "SELECT b.key, COALESCE(o.title, b.title) AS title, "
+        "COALESCE(o.author, b.author) AS author "
+        "FROM books b LEFT JOIN overrides o ON o.key = b.key"
+    ).fetchall()
+    for row in rows:
+        stats["books"] += 1
+        text = match_text(row["key"], row["title"], row["author"])
+        matched = False
+        for rule in rules:
+            if not rule.pattern.search(text):
+                continue
+            matched = True
+            # OR IGNORE, а не проверка наличия: строка (book_key, tag_id)
+            # может уже существовать как manual, и она главнее — ручное
+            # назначение не должно молча превратиться в авто.
+            conn.execute(
+                "INSERT OR IGNORE INTO book_tags(book_key, tag_id, source) VALUES(?,?, 'auto')",
+                (row["key"], tag_ids[rule.tag]),
+            )
+            stats["links"] += conn.execute("SELECT changes() AS n").fetchone()["n"]
+        stats["tagged"] += int(matched)
+    return stats
+
+
 def apply(conn: sqlite3.Connection) -> dict[str, int]:
     """Пересобрать auto-связи всего каталога. Идемпотентно.
 
@@ -94,42 +135,58 @@ def apply(conn: sqlite3.Connection) -> dict[str, int]:
     хуже, чем ни одного — по такой выдаче не видно, что правило не отработало.
     """
     rules = load_rules()
-    stats = {"rules": len(rules), "tags_created": 0, "links": 0, "books": 0, "tagged": 0}
     if not rules:
-        return stats
+        return {"rules": 0, "tags_created": 0, "links": 0, "books": 0, "tagged": 0}
 
     conn.execute("BEGIN IMMEDIATE")
     try:
-        tag_ids: dict[str, int] = {}
-        for rule in rules:
-            tag_id, created = _ensure_tag(conn, rule)
-            tag_ids[rule.tag] = tag_id
-            stats["tags_created"] += int(created)
-
-        # Карточки в статусе missing тоже обрабатываются: пропуск оставил бы у
-        # них auto-связи от прошлого прогона, а свежие правила к ним бы не
-        # применились — выдача зависела бы от того, был ли диск примонтирован.
-        conn.execute("DELETE FROM book_tags WHERE source = 'auto'")
-        rows = conn.execute("SELECT key, title, author FROM books").fetchall()
-        for row in rows:
-            stats["books"] += 1
-            text = match_text(row["key"], row["title"], row["author"])
-            matched = False
-            for rule in rules:
-                if not rule.pattern.search(text):
-                    continue
-                matched = True
-                # OR IGNORE, а не проверка наличия: строка (book_key, tag_id)
-                # может уже существовать как manual, и она главнее — ручное
-                # назначение не должно молча превратиться в авто.
-                conn.execute(
-                    "INSERT OR IGNORE INTO book_tags(book_key, tag_id, source) VALUES(?,?, 'auto')",
-                    (row["key"], tag_ids[rule.tag]),
-                )
-                stats["links"] += conn.execute("SELECT changes() AS n").fetchone()["n"]
-            stats["tagged"] += int(matched)
+        stats = _rebuild(conn, rules)
         conn.commit()
         return stats
     except Exception:
         conn.rollback()
         raise
+
+
+def preview(conn: sqlite3.Connection) -> dict:
+    """Покрытие, которое дали бы текущие правила, без записи в СУБД.
+
+    Тот же _rebuild, что и в apply, внутри транзакции с откатом: статистика
+    считается кодом записи, а не его копией, которая разъехалась бы с ним.
+    """
+    rules = load_rules()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        _rebuild(conn, rules)
+        return coverage(conn)
+    finally:
+        conn.rollback()
+
+
+def coverage(conn: sqlite3.Connection) -> dict:
+    """Покрытие живых карточек тегами любого источника: сколько размечено,
+    частоты тегов и неразмеченные по разделам. Только чтение."""
+    books = conn.execute("SELECT COUNT(*) AS n FROM books WHERE missing = 0").fetchone()["n"]
+    tagged = conn.execute(
+        "SELECT COUNT(DISTINCT bt.book_key) AS n FROM book_tags bt "
+        "JOIN books b ON b.key = bt.book_key WHERE b.missing = 0"
+    ).fetchone()["n"]
+    tag_rows = conn.execute(
+        "SELECT t.name, COUNT(DISTINCT bt.book_key) AS n FROM tags t "
+        "JOIN book_tags bt ON bt.tag_id = t.id "
+        "JOIN books b ON b.key = bt.book_key WHERE b.missing = 0 "
+        "GROUP BY t.id ORDER BY n DESC, t.name"
+    ).fetchall()
+    untagged_rows = conn.execute(
+        "SELECT COALESCE(o.section, b.section) AS section, COUNT(*) AS n "
+        "FROM books b LEFT JOIN overrides o ON o.key = b.key "
+        "WHERE b.missing = 0 AND NOT EXISTS "
+        "(SELECT 1 FROM book_tags bt WHERE bt.book_key = b.key) "
+        "GROUP BY 1 ORDER BY n DESC"
+    ).fetchall()
+    return {
+        "books": books,
+        "tagged": tagged,
+        "tags": [(row["name"], row["n"]) for row in tag_rows],
+        "untagged_by_section": [(row["section"], row["n"]) for row in untagged_rows],
+    }

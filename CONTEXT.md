@@ -23,6 +23,27 @@ _Avoid_: local client, remote desktop
 A non-trusted network client. It may read the catalogue and download a listed
 book file, but cannot use administrative operations.
 
+**Section**:
+The single shelf a book card belongs to. Every card has exactly one section;
+a manual section edit outranks the classified one.
+_Avoid_: category, tag
+
+**Tag**:
+A label used to filter the catalogue. A card may carry any number of tags,
+each of one kind (form, technology, topic, language, person, period, custom).
+Tags filter; they do not order the catalogue.
+_Avoid_: section, category
+
+**Automatic tag**:
+A tag assignment derived from tag rules. It is recomputed on every rescan and
+on explicit request, so it always reflects the current rules; it can only be
+removed by changing the rules.
+_Avoid_: suggested tag
+
+**Manual tag**:
+A tag assignment made by a person. Recomputing automatic tags never removes
+it, and editing manual tags never removes automatic ones.
+
 **Format selection**:
 The file-choice list shown when a Trusted LAN client selects a book. It exposes
 each available format before the client initiates a download. It is also the

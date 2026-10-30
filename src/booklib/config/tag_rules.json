@@ -244,12 +244,12 @@
   {
    "tag": "анархизм",
    "kind": "topic",
-   "pattern": "анарх|anarch|кропоткин|бакунин|bookchin|самоорганизац|solidarity|insurrection|post-civ|kronstadt|прямой демократ|ассамбле|акций протеста"
+   "pattern": "анарх|anarch|anarh|кропоткин|kropotkin|бакунин|bakunin|bookchin|bonanno|бонанно|goldman|vaneigem|perlman|primitivism|disobedience|самоорганизац|solidarity|insurrection|post-civ|kronstadt|прямой демократ|ассамбле|акций протеста"
   },
   {
    "tag": "философия",
    "kind": "topic",
-   "pattern": "философ|philosoph|ницше|шмитт|ясперс"
+   "pattern": "философ|philosoph|filosof|ницше|шмитт|ясперс|платон|platon|гегел|hegel|gegel|\\bкант\\b|иммануил|immanuil|лосев|кожев|kozhev|метафизик|metaphysic"
   },
 
   {
@@ -281,6 +281,37 @@
    "tag": "китайский",
    "kind": "language",
    "pattern": "китайск|chinese|\\bhsk\\b"
-  }
+  },
+ {
+  "_note": "Только язык Си: голое \\bC\\b ловило бы 'Vitamin C' и 'Part C'. Хвост (?![+\\w]) обязателен: \\b стоит и между 'C' и '+', и 'Beginning C++' без него становился Си.",
+  "tag": "C",
+  "kind": "technology",
+  "pattern": "\\bC (primer|programming|in a nutshell|quick syntax|reference|interfaces|traps)|head first c(?![+\\w])|beginning c(?![+\\w])|programming in c(?![+\\w])|\\bgcc\\b|\\bansi[- ]c(?![+\\w])|язык[а-я]* (си|c)(?![+\\w])"
+ },
+ {
+  "tag": "Raspberry Pi",
+  "kind": "technology",
+  "pattern": "raspberry|themagpi|\\bmagpi\\b"
+ },
+ {
+  "tag": "марксизм",
+  "kind": "topic",
+  "pattern": "маркс|\\bmarx|каутск|kautsk|kautsky|ленин|\\blenin|троцк|trotsk|социализм|socialism|коммунизм|communism|капитал\\b"
+ },
+ {
+  "tag": "ГУЛАГ",
+  "kind": "topic",
+  "pattern": "шаламов|shalamov|гинзбург|ginzburg|крутой маршрут|krutoy marshrut|солженицын|solzhenitsyn|гулаг|gulag|колымск"
+ },
+ {
+  "tag": "фантастика",
+  "kind": "topic",
+  "pattern": "фантастик|science fiction|sci-?fi|\\bлем\\b|станислав лем|stanislaw lem|stanislaw|стругацк|strugatsk|азимов|azimov|asimov|ле[- ]гуин|le-?guin|солярис|ийона тихого"
+ },
+ {
+  "tag": "английский",
+  "kind": "language",
+  "pattern": "английск\\w* (язык|граммат)|граммат\\w* английск|\\benglish\\b|speakout|(pre|upper)[- ]intermediate|\\bielts\\b|\\btoefl\\b"
+ }
  ]
 }

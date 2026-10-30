@@ -10,6 +10,7 @@ import pytest
 from booklib.errors import LibraryUnavailable
 from booklib.grouping import collect_groups, stats_report
 from booklib.scanner import sync
+from booklib.service import rescan
 from tests.conftest import make_book
 
 
@@ -112,3 +113,20 @@ def test_deleted_book_is_marked_missing_not_removed(library: Path, db: sqlite3.C
 
     assert stats["missing"] == 1
     assert db.execute("SELECT COUNT(*) AS n FROM books").fetchone()["n"] == 2
+
+
+def test_rescan_applies_autotags(library: Path, db: sqlite3.Connection) -> None:
+    """Автотеги пересобираются каждым ресканом, а не только тестами.
+
+    До этой проверки autotags.apply() не звался ниоткуда, и 3122 карточки
+    живой библиотеки стояли без единого тега. Мутация: убрать вызов из
+    service._rescan — тест падает.
+    """
+    make_book(library, "zephyr/zephyr_getting_started.pdf")
+
+    rescan()
+
+    rows = db.execute(
+        "SELECT t.name, bt.source FROM book_tags bt JOIN tags t ON t.id = bt.tag_id"
+    ).fetchall()
+    assert ("Zephyr", "auto") in [(row["name"], row["source"]) for row in rows]
