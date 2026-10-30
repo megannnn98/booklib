@@ -3,6 +3,7 @@
 # На каждый push и pull request:
 #   1. ruff check + ruff format --check + mypy + pytest на Python 3.12 / 3.13 / 3.14
 #   2. быстрые unit-тесты отдельной джобой для короткой обратной связи
+#   3. фронтенд отдельной джобой: tsc --noEmit + vitest (+ сверка бандла со сборкой)
 #
 # Тесты не трогают настоящую библиотеку: всё гоняется на временном корне
 # (см. tests/conftest.py), поэтому CI не зависит от внешнего диска.
@@ -54,9 +55,6 @@ jobs:
       - name: Mypy
         run: uv run mypy src
 
-      - name: Node unit tests
-        run: node --test tests/unit/*.cjs
-
       - name: Pytest
         run: uv run pytest -ra
 
@@ -77,16 +75,33 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
+      - name: Pytest (unit only)
+        run: uv run pytest tests/unit -ra
+
+  frontend:
+    name: frontend (tsc + vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
 
-      - name: Node unit tests
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Vitest
+        run: npm test
+
+      # Временно: старые node-тесты хелперов живут до переноса в vitest (шаг 2).
+      - name: Legacy node unit tests
         run: node --test tests/unit/*.cjs
-
-      - name: Pytest (unit only)
-        run: uv run pytest tests/unit -ra
 
   pre-commit:
     name: pre-commit

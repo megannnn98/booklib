@@ -1,5 +1,5 @@
-.PHONY: help install lock fmt lint typecheck test test-js test-unit test-integration hooks \
-        scan covers sections doctor serve restart logs
+.PHONY: help install install-js lock fmt lint typecheck test test-js typecheck-js build-js \
+        test-unit test-integration hooks scan covers sections doctor serve restart logs
 
 PKG := booklib
 
@@ -12,7 +12,10 @@ help:
 	@echo "  make lint             - ruff check"
 	@echo "  make typecheck        - mypy"
 	@echo "  make test             - pytest (all)"
-	@echo "  make test-js          - node unit tests"
+	@echo "  make install-js       - npm ci (frontend toolchain)"
+	@echo "  make test-js          - vitest (frontend unit tests)"
+	@echo "  make typecheck-js     - tsc --noEmit"
+	@echo "  make build-js         - собрать frontend/src → static/app.js"
 	@echo "  make test-unit        - pytest unit only"
 	@echo "  make test-integration - pytest integration only"
 	@echo "  make scan             - пересканировать библиотеку"
@@ -46,8 +49,17 @@ typecheck:
 test:
 	uv run pytest
 
+install-js:
+	npm ci
+
 test-js:
-	node --test tests/unit/*.cjs
+	npm test
+
+typecheck-js:
+	npm run typecheck
+
+build-js:
+	npm run build
 
 test-unit:
 	uv run pytest tests/unit -v
