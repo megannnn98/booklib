@@ -2,13 +2,11 @@
 
 // Инвариант: поднимать версию при ЛЮБОМ изменении файлов из STATIC_ASSETS,
 // иначе cache-first будет раздавать старую статику навсегда.
-const CACHE_VERSION = "booklib-sw-v8";
+const CACHE_VERSION = "booklib-sw-v9";
 
 const STATIC_ASSETS = [
   "/",
   "/static/style.css",
-  "/static/tag_helpers.js",
-  "/static/ui_helpers.js",
   "/static/app.js",
   "/static/manifest.webmanifest",
   "/static/icons/icon-192.png",

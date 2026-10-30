@@ -147,28 +147,30 @@ def test_html_includes_sw_registration() -> None:
     assert "sw.js" in js
 
 
-def test_html_loads_tag_helpers_before_app() -> None:
+def test_html_loads_single_bundled_app() -> None:
     html = client().get("/").text
-    assert '<script src="/static/tag_helpers.js"></script>' in html
     assert '<script src="/static/app.js"></script>' in html
-    assert html.index("/static/tag_helpers.js") < html.index("/static/app.js")
+    assert "/static/tag_helpers.js" not in html
+    assert "/static/ui_helpers.js" not in html
+    js = client().get("/static/app.js")
+    assert js.status_code == 200
+    assert "BooklibUiHelpers" not in js.text
+    assert "BooklibTagHelpers" not in js.text
 
 
-def test_html_loads_ui_helpers_before_app_and_sw_caches_it() -> None:
-    """app.js деструктурирует BooklibUiHelpers при загрузке: без файла витрина пустая,
-    а без записи в STATIC_ASSETS — пустая офлайн."""
-    html = client().get("/").text
-    assert '<script src="/static/ui_helpers.js"></script>' in html
-    assert html.index("/static/ui_helpers.js") < html.index("/static/app.js")
-    assert '"/static/ui_helpers.js"' in client().get("/sw.js").text
+def test_service_worker_caches_bundled_app() -> None:
+    sw = client().get("/sw.js").text
+    assert '"/static/app.js"' in sw
+    assert "/static/ui_helpers.js" not in sw
+    assert "/static/tag_helpers.js" not in sw
 
 
 def test_primary_click_semantics_survive_details_drawer() -> None:
-    """Подробности — отдельная кнопка: основной клик по-прежнему папка/форматы."""
+    """Бандл включает карточки; ролевые клики проверяются в cards.test.ts."""
     js = client().get("/static/app.js").text
     assert "info.onclick" in js
-    assert "event.stopPropagation();  // иначе клик уйдёт в карточку" in js
-    assert "node.onclick = () => (state.hostDesktop ? openBook(book) : openFiles(book));" in js
+    assert "event.stopPropagation()" in js
+    assert "state.hostDesktop ? deps.openBook(book) : deps.openFiles(book)" in js
 
 
 def test_html_has_theme_color_meta() -> None:
@@ -219,7 +221,7 @@ def test_sw_not_cached_by_browser() -> None:
 def test_service_worker_cache_cleanup_uses_prefix() -> None:
     """SW должен удалять только кэши с префиксом booklib-, не трогать чужие."""
     sw = client().get("/sw.js").text
-    assert 'const CACHE_VERSION = "booklib-sw-v8"' in sw
+    assert 'const CACHE_VERSION = "booklib-sw-v9"' in sw
     assert 'startsWith("booklib-")' in sw
 
 
@@ -275,22 +277,18 @@ def test_pwa_opens_files_without_host_desktop_marker() -> None:
     """Admin trusted LAN не является признаком ПК: карточка открывает форматы."""
     js = client().get("/static/app.js").text
     assert "state.hostDesktop = status.host_desktop === true" in js
-    assert "state.hostDesktop ? openBook(book) : openFiles(book)" in js
+    assert "state.hostDesktop ? deps.openBook(book) : deps.openFiles(book)" in js
 
 
 def test_editor_tag_lookup_is_case_insensitive_and_reports_unknown_tag() -> None:
     """Ручной тег не должен тихо теряться из-за регистра или алиаса."""
-    helpers = client().get("/static/tag_helpers.js").text
     js = client().get("/static/app.js").text
-    assert "function findAvailableTag(availableTags, value)" in helpers
-    assert "function addEditorTagFromInput(availableTags, editorTags, value)" in helpers
-    assert "function resolveEditorSubmitAction(event)" in helpers
-    assert "item.name.toLowerCase() === needle" in helpers
-    assert "alias.toLowerCase() === needle" in helpers
-    assert "Нет такого тега:" in helpers
-    assert "addEditorTagFromInput" in js
-    assert "resolveEditorSubmitAction" in js
-    assert "Формы теговых диалогов — только контейнеры разметки." in js
+    assert "function findAvailableTag(availableTags, value)" in js
+    assert "function addEditorTagFromInput(availableTags, editorTags, value)" in js
+    assert "function resolveEditorSubmitAction(event)" in js
+    assert "item.name.toLowerCase() === needle" in js
+    assert "alias.toLowerCase() === needle" in js
+    assert "Нет такого тега:" in js
     assert 'el.tfForm.addEventListener("submit", (event) => event.preventDefault());' in js
     assert 'el.taForm.addEventListener("submit", (event) => event.preventDefault());' in js
 
