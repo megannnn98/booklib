@@ -143,7 +143,7 @@
   {
    "tag": "электроника",
    "kind": "topic",
-   "pattern": "электроник|elektronika|радиолюбител|схемотехник|электротехник|усилител|электрические цепи|аналоговые интерфейс"
+   "pattern": "электроник|elektronika|\\belectronics?\\b|\\banalog\\b|радиолюбител|схемотехник|электротехник|усилител|электрические цепи|аналоговые интерфейс"
   },
   {
    "tag": "печатные платы",
@@ -244,12 +244,12 @@
   {
    "tag": "анархизм",
    "kind": "topic",
-   "pattern": "анарх|anarch|anarh|кропоткин|kropotkin|бакунин|bakunin|bookchin|bonanno|бонанно|goldman|vaneigem|perlman|primitivism|disobedience|самоорганизац|solidarity|insurrection|post-civ|kronstadt|прямой демократ|ассамбле|акций протеста"
+   "pattern": "анарх|anarch|anarh|кропоткин|kropotkin|бакунин|bakunin|bookchin|bonanno|бонанно|goldman|vaneigem|perlman|primitivism|disobedience|махно|makhno|crimethinc|gelderloos|berneri|самоорганизац|solidarity|insurrection|post-civ|kronstadt|прямой демократ|ассамбле|акций протеста"
   },
   {
    "tag": "философия",
    "kind": "topic",
-   "pattern": "философ|philosoph|filosof|ницше|шмитт|ясперс|платон|platon|гегел|hegel|gegel|\\bкант\\b|иммануил|immanuil|лосев|кожев|kozhev|метафизик|metaphysic"
+   "pattern": "философ|philosoph|filosof|ницше|шмитт|ясперс|платон|platon|гегел|hegel|gegel|\\bкант\\b|иммануил|immanuil|лосев|кожев|kozhev|метафизик|metaphysic|критика (чистого|практического) разума|критика способности суждения"
   },
 
   {
@@ -301,17 +301,38 @@
  {
   "tag": "ГУЛАГ",
   "kind": "topic",
-  "pattern": "шаламов|shalamov|гинзбург|ginzburg|крутой маршрут|krutoy marshrut|солженицын|solzhenitsyn|гулаг|gulag|колымск"
+  "pattern": "шаламов|shalamov|гинзбург|ginzburg|крутой маршрут|krutoy marshrut|солженицын|solzhenitsyn|гулаг|gulag|колымск|колыма|kolyma|schalamow|warlam|георги\\w* демидов|демидов,? георги"
  },
  {
   "tag": "фантастика",
   "kind": "topic",
-  "pattern": "фантастик|science fiction|sci-?fi|\\bлем\\b|станислав лем|stanislaw lem|stanislaw|стругацк|strugatsk|азимов|azimov|asimov|ле[- ]гуин|le-?guin|солярис|ийона тихого"
+  "pattern": "фантастик|science fiction|sci-?fi|\\bлем\\b|станислав лем|stanislaw lem|stanislaw|стругацк|strugatsk|азимов|azimov|asimov|ле[- ]гуин|le-?guin|солярис|ийон\\w* тих|тарантог|пиркс|трурл|магелланово облако|непобедимый|насморк|футурологическ|глас господа|астронавты|сумма технологи|найденная в ванне"
  },
  {
   "tag": "английский",
   "kind": "language",
   "pattern": "английск\\w* (язык|граммат)|граммат\\w* английск|\\benglish\\b|speakout|(pre|upper)[- ]intermediate|\\bielts\\b|\\btoefl\\b"
+ },
+ {
+  "_note": "LLM — отдельный тег: книга про LangChain не обязательно про лингвистику.",
+  "tag": "NLP",
+  "kind": "topic",
+  "pattern": "\\bnlp\\b|natural language|обработк\\w* естественн|obrabotka estestvennogo|компьютерн\\w* лингвист|computational linguist|spacy|\\bnltk\\b|hugging ?face|transformers? for|трансформер|word2vec|sentiment analysis|text mining|машинн\\w* перевод|machine translation|named entit"
+ },
+ {
+  "tag": "Bluetooth",
+  "kind": "technology",
+  "pattern": "bluetooth|\\bble\\b"
+ },
+ {
+  "tag": "сотовая связь",
+  "kind": "technology",
+  "pattern": "quectel|\\blte\\b|\\bgsm\\b|nb-?iot|lte-?m\\b|\\bcat-?m1\\b|\\bsim\\d{3,}"
+ },
+ {
+  "tag": "питание и АКБ",
+  "kind": "topic",
+  "pattern": "fuel gauge|modelgauge|battery|аккумулятор|power supply|источник\\w* питания|dc-?dc|\\bldo\\b|charger"
  }
  ]
 }
