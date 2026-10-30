@@ -166,7 +166,7 @@ export interface MergeTagsPayload {
   target: number;
 }
 
-/** Ответ мутирующих теговых ручек — обновлённая запись тега. */
+/** Создание/правка тега и изменение алиасов возвращают запись тега. */
 export type TagMutationResponse = TagDto;
 
 /** Тело ошибки API: у разных ручек разные поля. */
@@ -174,4 +174,27 @@ export interface ApiErrorBody {
   error?: string;
   detail?: string;
   count?: number;
+}
+
+/** `DELETE /api/tags/{id}`. */
+export interface DeleteTagResult {
+  deleted: number;
+}
+
+/** `POST /api/tags/merge`. */
+export interface MergeTagsResult {
+  moved: number;
+  dropped: number;
+  aliases_moved: number;
+  skipped: number;
+}
+
+/** `PUT /api/book/{key}/tags`. */
+export interface SetBookTagsPayload {
+  tags: string[];
+}
+
+export interface SetBookTagsResult {
+  key: string;
+  tags: number[];
 }

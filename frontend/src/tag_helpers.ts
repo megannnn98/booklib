@@ -7,7 +7,8 @@ export interface TagLike {
 }
 
 export interface EditorTagLike extends TagLike {
-  aliases?: readonly string[] | undefined;
+  id?: number | undefined;
+  kind?: string | undefined;
 }
 
 export interface AddEditorTagResult<T extends TagLike> {
@@ -45,9 +46,9 @@ export function findAvailableTag<T extends TagLike>(
 
 export function addEditorTagFromInput<T extends TagLike>(
   availableTags: readonly T[],
-  editorTags: readonly T[],
+  editorTags: readonly EditorTagLike[],
   value: string,
-): AddEditorTagResult<T> {
+): AddEditorTagResult<EditorTagLike> {
   const normalized = normalizeTagName(value);
   if (!normalized) {
     return { added: false, editorTags, inputValue: value, error: null };

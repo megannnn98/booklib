@@ -2,7 +2,8 @@
 // навигация получают готовый state и только читают/меняют его через эти функции.
 
 import { readPref, type FilterChip, type PreferenceStorage } from "./ui_helpers";
-import type { BookDto, BookTagDto, FormatCountDto, SectionDto, TagDto } from "./types";
+import type { EditorTagLike } from "./tag_helpers";
+import type { BookDto, FormatCountDto, SectionDto, TagDto } from "./types";
 
 export type ViewMode = "grid" | "list";
 export type Density = "standard" | "compact";
@@ -21,7 +22,7 @@ export interface CatalogState {
   hostDesktop: boolean;
   availableTags: TagDto[];
   availableFormats: FormatCountDto[];
-  editorTags: BookTagDto[];
+  editorTags: EditorTagLike[];
   selectedTagId: number | null;
   view: ViewMode;
   density: Density;
