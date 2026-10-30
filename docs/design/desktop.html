@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Booklib — макет витрины</title>
+<!-- Макет использует боевую таблицу стилей: дизайн и реализация не расходятся.
+     Параметры: ?view=list, ?theme=light, ?details=1. Данные выдуманные. -->
+<link rel="stylesheet" href="../../src/booklib/api/static/style.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-logo" viewBox="0 0 24 24"><path d="M4 4.5h5.5a2.5 2.5 0 0 1 2.5 2.5v13a2 2 0 0 0-2-2H4z"/><path d="M20 4.5h-5.5A2.5 2.5 0 0 0 12 7v13a2 2 0 0 1 2-2h6z"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" stroke-width="3"/></symbol>
+  <symbol id="i-dense" viewBox="0 0 24 24"><path d="M4 4h4v4H4zM10 4h4v4h-4zM16 4h4v4h-4zM4 10h4v4H4zM10 10h4v4h-4zM16 10h4v4h-4zM4 16h4v4H4zM10 16h4v4h-4zM16 16h4v4h-4z"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.8v.01"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M14.5 5.5l4 4L8 20H4v-4z"/><path d="M12.5 7.5l4 4"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3L19.5 9"/><path d="M19.5 4.5V9H15"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 14.1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 3V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.1a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3a1.5 1.5 0 0 1 0 2.1l-6.2 6.2a1.5 1.5 0 0 1-2.1 0z"/><circle cx="8" cy="8" r="1.3"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-books" viewBox="0 0 24 24"><path d="M4 4.5h4v15H4zM10 4.5h4v15h-4z"/><path d="m16 5.2 3.6-1 3.4 14.5-3.6 1z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-install" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2.5"/><path d="M12 8v6M9.5 11.5 12 14l2.5-2.5"/></symbol>
+</svg>
+<aside id="sidebar" aria-label="Навигация">
+  <div class="brand"><svg class="icon"><use href="#i-logo"/></svg>Booklib</div>
+  <nav class="nav-main">
+    <button type="button" class="nav-item" data-view="all">
+      <svg class="icon"><use href="#i-books"/></svg><span class="label">Все книги</span><span class="count" id="totalCount"></span>
+    </button>
+    <button type="button" class="nav-item" data-view="recent">
+      <svg class="icon"><use href="#i-clock"/></svg><span class="label">Недавно добавленные</span>
+    </button>
+  </nav>
+  <div class="nav-label"><span>Разделы</span></div>
+  <div class="section-search">
+    <svg class="icon"><use href="#i-search"/></svg>
+    <input id="sectionSearch" type="search" placeholder="Найти раздел" autocomplete="off" aria-label="Поиск по разделам">
+  </div>
+  <nav id="sections" aria-label="Разделы"></nav>
+  <div class="sidebar-foot">
+    <div id="status"></div>
+    <button id="settingsBtn" type="button" class="nav-item admin-only">
+      <svg class="icon"><use href="#i-settings"/></svg><span class="label">Настройки</span>
+    </button>
+    <button id="tagsAdminBtn" type="button" class="nav-item admin-only">
+      <svg class="icon"><use href="#i-tag"/></svg><span class="label">Словарь тегов</span>
+    </button>
+    <button id="installBtn" type="button" class="nav-item">
+      <svg class="icon"><use href="#i-install"/></svg><span class="label">Установить Booklib</span>
+    </button>
+  </div>
+</aside>
+<main class="app-main">
+  <header id="topbar">
+    <button id="burger" type="button" class="btn icon-only" title="Разделы" aria-label="Показать или скрыть разделы">
+      <svg class="icon"><use href="#i-menu"/></svg>
+    </button>
+    <div class="search-wrap">
+      <svg class="icon"><use href="#i-search"/></svg>
+      <input id="search" type="search" placeholder="Название, автор, имя файла" autocomplete="off" enterkeyhint="search" aria-label="Поиск по каталогу">
+    </div>
+    <span class="spacer"></span>
+    <select id="sort" aria-label="Сортировка">
+      <option value="title">По названию</option>
+      <option value="added">По дате добавления</option>
+      <option value="year">По году</option>
+      <option value="size">По размеру</option>
+    </select>
+    <button id="filtersBtn" type="button" class="btn" title="Фильтры: формат и теги">
+      <svg class="icon"><use href="#i-filter"/></svg><span class="label-wide">Фильтры</span><span class="badge" id="filtersBadge" hidden></span>
+    </button>
+    <div class="seg" id="viewSwitch" role="group" aria-label="Вид каталога">
+      <button type="button" data-mode="grid" title="Сетка" aria-label="Сетка"><svg class="icon"><use href="#i-grid"/></svg></button>
+      <button type="button" data-mode="list" title="Список" aria-label="Список"><svg class="icon"><use href="#i-list"/></svg></button>
+    </div>
+    <button id="densityBtn" type="button" class="btn icon-only" title="Компактная сетка" aria-label="Компактная сетка" aria-pressed="false">
+      <svg class="icon"><use href="#i-dense"/></svg>
+    </button>
+    <button id="themeBtn" type="button" class="btn icon-only" title="Сменить тему" aria-label="Сменить тему">
+      <svg class="icon"><use href="#i-sun"/></svg>
+    </button>
+    <button id="rescan" type="button" class="btn admin-only" title="Пересканировать библиотеку">
+      <svg class="icon"><use href="#i-refresh"/></svg><span class="label-wide">Обновить</span>
+    </button>
+  </header>
+  <div id="contextbar">
+    <h1 id="viewTitle">Даташиты и техдокументация</h1>
+    <span id="counter">41 книга</span>
+    <div id="chips"><button class="chip" type="button">Даташиты и техдокументация<span class="x">✕</span></button><button class="chip" type="button">PDF<span class="x">✕</span></button><button class="chip" type="button">#stm32<span class="x">✕</span></button><button class="chip reset" type="button">Сбросить всё</button></div>
+  </div>
+  <div id="grid" class="view-grid"></div>
+  <div id="more"><button type="button" class="btn">Показать ещё 120 из 2862</button></div>
+</main>
+<dialog id="details" class="drawer">
+  <div class="dlg-body">
+    <div class="dlg-head"><span></span><button type="button" class="dlg-close" aria-label="Закрыть"><svg class="icon"><use href="#i-x"/></svg></button></div>
+    <div class="d-cover" id="d-cover"></div>
+    <h2 id="d-title">Математический анализ. Том 1</h2>
+    <p id="d-author">Зорич В. А.</p>
+    <dl class="d-props"><dt>Раздел</dt><dd>Математика</dd><dt>Год</dt><dd>2019</dd><dt>Форматы</dt><dd>DJVU, PDF</dd><dt>Размер</dt><dd>18.4 МБ</dd>
+      <dt>Теги</dt><dd class="tags"><button class="tag-chip" type="button">анализ</button><button class="tag-chip" type="button">учебник</button></dd></dl>
+    <div class="d-actions"><button class="btn primary" type="button"><svg class="icon"><use href="#i-folder"/></svg>Открыть в папке</button><button class="btn" type="button"><svg class="icon"><use href="#i-edit"/></svg>Править</button></div>
+    <h3>Файлы</h3>
+    <div id="d-files">
+      <a class="file-link" href="#"><span class="fmt">djvu</span><span class="f-name">Зорич - Математический анализ. Том 1 - 2019.djvu</span><span class="f-meta">12.1 МБ</span><svg class="icon"><use href="#i-download"/></svg></a>
+      <a class="file-link" href="#"><span class="fmt">pdf</span><span class="f-name">Зорич - Математический анализ. Том 1 - 2019.pdf</span><span class="f-meta">6.3 МБ</span><svg class="icon"><use href="#i-download"/></svg></a>
+    </div>
+  </div>
+</dialog>
+<script src="mockup.js"></script>
+</body>
+</html>

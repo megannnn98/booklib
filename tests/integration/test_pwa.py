@@ -154,6 +154,23 @@ def test_html_loads_tag_helpers_before_app() -> None:
     assert html.index("/static/tag_helpers.js") < html.index("/static/app.js")
 
 
+def test_html_loads_ui_helpers_before_app_and_sw_caches_it() -> None:
+    """app.js деструктурирует BooklibUiHelpers при загрузке: без файла витрина пустая,
+    а без записи в STATIC_ASSETS — пустая офлайн."""
+    html = client().get("/").text
+    assert '<script src="/static/ui_helpers.js"></script>' in html
+    assert html.index("/static/ui_helpers.js") < html.index("/static/app.js")
+    assert '"/static/ui_helpers.js"' in client().get("/sw.js").text
+
+
+def test_primary_click_semantics_survive_details_drawer() -> None:
+    """Подробности — отдельная кнопка: основной клик по-прежнему папка/форматы."""
+    js = client().get("/static/app.js").text
+    assert "info.onclick" in js
+    assert "event.stopPropagation();  // иначе клик уйдёт в карточку" in js
+    assert "node.onclick = () => (state.hostDesktop ? openBook(book) : openFiles(book));" in js
+
+
 def test_html_has_theme_color_meta() -> None:
     html = client().get("/").text
     assert "theme-color" in html
@@ -202,7 +219,7 @@ def test_sw_not_cached_by_browser() -> None:
 def test_service_worker_cache_cleanup_uses_prefix() -> None:
     """SW должен удалять только кэши с префиксом booklib-, не трогать чужие."""
     sw = client().get("/sw.js").text
-    assert 'const CACHE_VERSION = "booklib-sw-v7"' in sw
+    assert 'const CACHE_VERSION = "booklib-sw-v8"' in sw
     assert 'startsWith("booklib-")' in sw
 
 

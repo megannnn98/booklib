@@ -264,12 +264,24 @@ def api_tags() -> list[dict]:
         return tags.list_tags(conn)
 
 
+@app.get("/api/formats")
+def api_formats() -> list[dict]:
+    """Сводка форматов для панели фильтров: сколько карточек содержат каждый."""
+    with closing(connect()) as conn:
+        rows = conn.execute(
+            "SELECT f.value AS name, COUNT(*) AS n FROM books b, json_each(b.formats_json) f "
+            "WHERE b.missing = 0 GROUP BY 1 ORDER BY 2 DESC, 1"
+        ).fetchall()
+    return [{"name": row["name"], "count": row["n"]} for row in rows]
+
+
 @app.get("/api/books")
 def api_books(
     *,
     section: str | None = None,
     q: str | None = None,
     tag: Annotated[list[str] | None, Query()] = None,
+    format: Annotated[list[str] | None, Query()] = None,
     sort: str = "title",
     limit: int = Query(500, le=2000),
     offset: int = 0,
@@ -296,6 +308,16 @@ def api_books(
         )
         where.append(f"({title_clause} OR {tag_clause})")
         params.extend([f"%{escaped.lower()}%"] * 3)
+    if format:
+        # OR внутри фильтра: карточка проходит, если хоть один её файл в нужном
+        # формате (formats_json хранит расширения в нижнем регистре).
+        wanted = sorted({item.strip().lower() for item in format if item.strip()})
+        if wanted:
+            marks = ", ".join("?" * len(wanted))
+            where.append(
+                f"EXISTS (SELECT 1 FROM json_each(b.formats_json) f WHERE f.value IN ({marks}))"
+            )
+            params.extend(wanted)
     if tag:
         with closing(connect()) as conn:
             try:
