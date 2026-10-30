@@ -1,0 +1,19 @@
+{
+  "name": "booklib-frontend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "TypeScript sources for the Booklib catalogue UI. Bundled into src/booklib/api/static/app.js.",
+  "scripts": {
+    "build": "node scripts/build-frontend.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "esbuild": "^0.28.2",
+    "jsdom": "^30.1.3",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

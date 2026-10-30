@@ -3,7 +3,7 @@
 Локальный веб-каталог библиотеки — каталога, указанного в настройках (по умолчанию
 `~/Books`): превью на каждую книгу, разделы по смыслу, клик открывает папку
 в файловом менеджере с выделенным файлом.
-Стек: Python + FastAPI + Typer, зависимости через `uv` (`pyproject.toml`), ванильный JS.
+Стек: Python + FastAPI + Typer, зависимости через `uv` (`pyproject.toml`), ванильный TypeScript (strict), сборка esbuild.
 Линт и формат — ruff, типы — mypy, тесты — pytest, хуки — pre-commit.
 
 ## Железные инварианты
@@ -54,6 +54,9 @@ src/booklib/meta.py             нормализация имени файла, 
 src/booklib/covers.py           превью: pdftocairo / ddjvu+Pillow / zip(epub) / base64(fb2)
 src/booklib/taxonomy.py         разделы: overrides → taxonomy.json → rules.json → «Новое»
 src/booklib/opener.py           DBus FileManager1.ShowItems, запасной xdg-open
+frontend/src/                  TS: API, состояние, DOM-модули, browser.ts — вход
+frontend/test/                 Vitest + jsdom, тесты по поведению
+src/booklib/api/static/app.js   собранный бандл (в git, Node на проде не нужен)
 src/booklib/api/app.py          FastAPI + статика в api/static (роуты без orchestration)
 src/booklib/cli/app.py          Typer CLI, точка входа `booklib`
 scripts/build_taxonomy.py       разовая раскладка → config/taxonomy.json (НЕ в git, см. scripts/README.md)
@@ -180,7 +183,9 @@ Typer-callback и lifespan FastAPI): миграция legacy-состояния 
 
 ```bash
 make help                                 # список целей
-make fmt lint typecheck test              # перед коммитом
+make fmt lint typecheck test              # Python перед коммитом
+npm ci                                   # Node 22+, зависимости фронта
+make typecheck-js test-js build-js         # TypeScript, Vitest, esbuild
 make restart logs                         # systemd --user сервис
 
 uv run booklib scan --dry-run             # статистика без записи в СУБД
