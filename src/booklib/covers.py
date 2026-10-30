@@ -16,6 +16,7 @@ import hashlib
 import io
 import json
 import os
+import posixpath
 import re
 import subprocess
 import tempfile
@@ -23,6 +24,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import unquote
 
 from PIL import Image
 
@@ -47,6 +49,11 @@ ANY_IMAGE_BINARY_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 EPUB_COVER_NAME_RE = re.compile(r"cover.*\.(jpe?g|png)$", re.IGNORECASE)
+EPUB_IMAGE_REF_RE = re.compile(
+    r'(?:src|href)\s*=\s*["\']([^"\'#]+\.(?:jpe?g|png|gif))["\']', re.IGNORECASE
+)
+# Сколько первых документов spine просматривать в поисках картинки
+EPUB_SPINE_SCAN_LIMIT = 10
 
 
 class CoverError(RuntimeError):
@@ -183,6 +190,27 @@ def _epub_cover_bytes(source: Path) -> bytes:
         fallback = next((n for n in names if EPUB_COVER_NAME_RE.search(n)), None)
         if fallback:
             return _read_limited(archive, fallback)
+
+        # Обложка не помечена (типично для pandoc): как и для fb2, берём первую
+        # картинку — в порядке чтения книги, а не архива или манифеста.
+        if opf_name:
+            spine = [
+                manifest.get(ref.get("idref"))
+                for ref in root.iterfind(".//opf:spine/opf:itemref", ns)
+            ]
+            for href in spine[:EPUB_SPINE_SCAN_LIMIT]:
+                doc_name = posixpath.normpath(
+                    posixpath.join(posixpath.dirname(opf_name), href or "")
+                )
+                if not href or doc_name not in names:
+                    continue
+                doc = _read_limited(archive, doc_name).decode("utf-8", "replace")
+                for ref in EPUB_IMAGE_REF_RE.findall(doc):
+                    image_name = posixpath.normpath(
+                        posixpath.join(posixpath.dirname(doc_name), unquote(ref))
+                    )
+                    if image_name in names:
+                        return _read_limited(archive, image_name)
     raise CoverError("в epub не найдена обложка")
 
 
