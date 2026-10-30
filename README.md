@@ -353,3 +353,23 @@ avahi, а не резервация на роутере.
 - `/api/open`, `/api/rescan` и `/api/download` отвечают 503;
 - `/api/files` продолжает отдавать список форматов, но у файла без доступа к
   диску `size_mb: null`.
+
+## Разработка фронтенда
+
+Витрина написана на ванильном TypeScript, без фреймворка. Исходники лежат в
+`frontend/src/`, тесты — в `frontend/test/` (Vitest + jsdom). Для разработки
+нужен Node 22. Зависимости фиксируются в `package-lock.json`:
+
+```bash
+npm ci
+npm run typecheck
+npm test
+npm run build
+```
+
+Те же проверки: `make typecheck-js test-js build-js`. Esbuild собирает
+`frontend/src/browser.ts` в `src/booklib/api/static/app.js`. Бандл хранится в git
+и входит в Python-пакет: для запуска установленного booklib и systemd-сервиса
+Node не нужен. После изменений TS пересоберите и закоммитьте бандл; CI сверяет
+его с повторной сборкой. При изменении статики поднимайте `CACHE_VERSION` в
+`sw.js`, чтобы установленная PWA обновила кэш (текущая версия — v9).
