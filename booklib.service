@@ -1,6 +1,6 @@
 [Unit]
 Description=booklib — локальный веб-каталог библиотеки
-Documentation=file:%h/booklib/README.md
+Documentation=file:%h/Documents/booklib/README.md
 # Привязка к графической сессии: открытие папки идёт через DBus в nemo,
 # без сессии эта функция всё равно не работает.
 After=graphical-session.target
@@ -8,8 +8,8 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/booklib
-ExecStart=%h/.local/bin/uv run --directory %h/booklib booklib serve
+WorkingDirectory=%h/Documents/booklib
+ExecStart=%h/.local/bin/uv run --directory %h/Documents/booklib booklib serve
 Restart=on-failure
 RestartSec=5
 

@@ -9,8 +9,8 @@ to local and trusted LAN clients.
 A browser running on the host computer, whether it reaches Booklib directly by
 loopback or through the host's Caddy address. It is the only client type for
 which a card selection may open the host file manager. Caddy proves the
-non-loopback case with its server-owned desktop marker for the host's stable
-IPv4 address.
+non-loopback case with its server-owned desktop marker for connections whose
+peer address equals the local address, independent of the DHCP lease.
 _Avoid_: loopback client, local client, admin client
 
 **Trusted LAN client**:
