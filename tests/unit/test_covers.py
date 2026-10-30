@@ -94,6 +94,34 @@ def test_epub_without_cover_reports_reason(tmp_path: Path) -> None:
         covers._epub_cover_bytes(epub)
 
 
+def test_epub_without_cover_meta_falls_back_to_first_spine_image(tmp_path: Path) -> None:
+    """Pandoc-epub: обложка не помечена в OPF, картинки лежат как media/fileN.jpg.
+
+    Берётся первая картинка в порядке чтения (spine), а не первая в архиве или
+    манифесте — там pandoc кладёт их в обратном порядке.
+    """
+    epub = tmp_path / "pandoc.epub"
+    with zipfile.ZipFile(epub, "w") as archive:
+        archive.writestr(
+            "EPUB/content.opf",
+            '<package xmlns="http://www.idpf.org/2007/opf"><manifest>'
+            '<item id="img9" href="media/file9.jpg" media-type="image/jpeg"/>'
+            '<item id="img0" href="media/file0.jpg" media-type="image/jpeg"/>'
+            '<item id="title" href="text/title.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="ch1" href="text/ch001.xhtml" media-type="application/xhtml+xml"/>'
+            '</manifest><spine><itemref idref="title"/><itemref idref="ch1"/></spine></package>',
+        )
+        archive.writestr("EPUB/media/file9.jpg", b"last")
+        archive.writestr("EPUB/media/file0.jpg", b"first")
+        archive.writestr("EPUB/text/title.xhtml", "<html><body><h1>T</h1></body></html>")
+        archive.writestr(
+            "EPUB/text/ch001.xhtml",
+            '<html><body><img src="../media/file0.jpg"/><img src="../media/file9.jpg"/></body></html>',
+        )
+
+    assert covers._epub_cover_bytes(epub) == b"first"
+
+
 def test_fb2_without_images_reports_reason(tmp_path: Path) -> None:
     fb2 = tmp_path / "plain.fb2"
     fb2.write_bytes(b"<?xml version='1.0'?><FictionBook><body/></FictionBook>")
